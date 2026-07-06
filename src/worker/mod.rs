@@ -19,8 +19,11 @@ use crate::config::load::load_config;
 use crate::config::{Config, SegmentConfig};
 use crate::render::{AsyncSegmentValues, LoweredPrompt, render_with_async};
 use crate::segments::SegmentContent;
-use crate::segments::git::{collect_git_status, render_git_branch, render_git_status};
-use crate::segments::runtime::{collect_rust_version, render_rust_version};
+use crate::segments::git::{
+    collect_git_status, git_cache_key, render_git_branch, render_git_status,
+};
+use crate::segments::runtime::{collect_node_version, node_cache_key, render_node_version};
+use crate::segments::runtime::{collect_rust_version, render_rust_version, rust_cache_key};
 use crate::state::PromptState;
 use jobs::{JobOutcome, JobPool, JobResult};
 use protocol::{
@@ -347,9 +350,10 @@ fn async_values(
     let now = Instant::now();
     let mut values = AsyncSegmentValues::new();
 
-    if config_uses_any_segment(config, &["git_branch", "git_status"]) {
+    if config_uses_any_segment(config, &["git_branch", "git_status"])
+        && let Some(status_key) = git_cache_key(cwd, config_generation)
+    {
         let ttl = segment_ttl(&config.segment("git_status"), GIT_REFRESH_TTL);
-        let status_key = git_status_key(cwd, config_generation);
         let branch_key = git_branch_key_from_status_key(&status_key);
         values.insert(
             "git_branch".to_string(),
@@ -361,10 +365,18 @@ fn async_values(
         );
     }
 
-    if config_uses_segment(config, "rust_version") {
+    if config_uses_segment(config, "rust_version")
+        && let Some(key) = rust_cache_key(cwd, config_generation)
+    {
         let ttl = segment_ttl(&config.segment("rust_version"), RUNTIME_REFRESH_TTL);
-        let key = rust_version_key(cwd, config_generation);
         values.insert("rust_version".to_string(), cache.lookup(&key, now, ttl));
+    }
+
+    if config_uses_segment(config, "node_version")
+        && let Some(key) = node_cache_key(cwd, config_generation)
+    {
+        let ttl = segment_ttl(&config.segment("node_version"), RUNTIME_REFRESH_TTL);
+        values.insert("node_version".to_string(), cache.lookup(&key, now, ttl));
     }
 
     values
@@ -386,7 +398,15 @@ fn schedule_async_refreshes(
         config,
         config_generation,
     );
-    schedule_rust_refresh(pool, cache, generation, cwd, config, config_generation);
+    schedule_rust_refresh(
+        pool,
+        cache,
+        generation,
+        cwd.clone(),
+        config,
+        config_generation,
+    );
+    schedule_node_refresh(pool, cache, generation, cwd, config, config_generation);
 }
 
 fn schedule_git_refresh(
@@ -401,7 +421,10 @@ fn schedule_git_refresh(
         return;
     }
 
-    let status_key = git_status_key(&cwd, config_generation);
+    let Some(status_key) = git_cache_key(&cwd, config_generation) else {
+        return;
+    };
+
     let status_config = config.segment("git_status");
     let ttl = segment_ttl(&status_config, GIT_REFRESH_TTL);
     if !cache.needs_refresh(&status_key, Instant::now(), ttl) {
@@ -461,7 +484,10 @@ fn schedule_rust_refresh(
         return;
     }
 
-    let key = rust_version_key(&cwd, config_generation);
+    let Some(key) = rust_cache_key(&cwd, config_generation) else {
+        return;
+    };
+
     let rust_config = config.segment("rust_version");
     let ttl = segment_ttl(&rust_config, RUNTIME_REFRESH_TTL);
     if !cache.needs_refresh(&key, Instant::now(), ttl) {
@@ -489,12 +515,47 @@ fn schedule_rust_refresh(
     }
 }
 
-fn git_status_key(cwd: &std::path::Path, config_generation: u64) -> CacheKey {
-    CacheKey::new("git_status", cwd.to_string_lossy(), config_generation)
-}
+fn schedule_node_refresh(
+    pool: &JobPool<AsyncJobSegments>,
+    cache: &mut SegmentCache,
+    generation: u64,
+    cwd: PathBuf,
+    config: &Config,
+    config_generation: u64,
+) {
+    if !config_uses_segment(config, "node_version") {
+        return;
+    }
 
-fn rust_version_key(cwd: &std::path::Path, config_generation: u64) -> CacheKey {
-    CacheKey::new("rust_version", cwd.to_string_lossy(), config_generation)
+    let Some(key) = node_cache_key(&cwd, config_generation) else {
+        return;
+    };
+
+    let node_config = config.segment("node_version");
+    let ttl = segment_ttl(&node_config, RUNTIME_REFRESH_TTL);
+    if !cache.needs_refresh(&key, Instant::now(), ttl) {
+        return;
+    }
+
+    cache.mark_inflight(key.clone());
+    let timeout = segment_timeout(&node_config, RUNTIME_TIMEOUT);
+    let job_key = key.clone();
+    let spawn_result = pool.spawn(generation, key.clone(), timeout, move |deadline| {
+        let content = collect_node_version(&cwd, deadline)
+            .ok()
+            .flatten()
+            .and_then(|version| render_node_version(&version, &node_config));
+        AsyncJobSegments {
+            segments: vec![AsyncJobSegment {
+                key: job_key,
+                content,
+            }],
+        }
+    });
+
+    if spawn_result.is_err() {
+        cache.complete_failure(key, Instant::now());
+    }
 }
 
 fn git_branch_key_from_status_key(status_key: &CacheKey) -> CacheKey {
@@ -527,15 +588,10 @@ fn config_uses_segment(config: &Config, id: &str) -> bool {
 }
 
 fn render_status(config: &Config, async_values: &AsyncSegmentValues) -> RenderStatus {
-    let has_incomplete_async_segment = ["git_branch", "git_status", "rust_version"]
+    let has_incomplete_async_segment = async_values
         .iter()
-        .filter(|id| config_uses_segment(config, id))
-        .any(|id| {
-            matches!(
-                async_values.get(*id),
-                None | Some(AsyncValue::Loading | AsyncValue::Stale(_))
-            )
-        });
+        .filter(|(id, _value)| config_uses_segment(config, id))
+        .any(|(_id, value)| matches!(value, AsyncValue::Loading | AsyncValue::Stale(_)));
 
     if has_incomplete_async_segment {
         RenderStatus::Partial
@@ -620,13 +676,18 @@ mod tests {
     }
 
     #[test]
-    fn render_status_is_partial_when_async_values_are_loading_or_stale() {
+    fn render_status_is_final_when_no_async_values_are_applicable() {
         let config = Config::default();
 
         assert_eq!(
             render_status(&config, &AsyncSegmentValues::new()),
-            RenderStatus::Partial
+            RenderStatus::Final
         );
+    }
+
+    #[test]
+    fn render_status_is_partial_when_async_values_are_loading_or_stale() {
+        let config = Config::default();
 
         let values = AsyncSegmentValues::from([
             ("git_branch".to_string(), AsyncValue::Failed),

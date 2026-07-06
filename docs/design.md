@@ -591,6 +591,21 @@ order; do not start async work before the sync renderer is snapshot-tested.
   line; superseded generations are never applied._
 - **M5 — Runtime segments.** `runtime.rs` (marker files first, versions via
   commands), SSH context, timeouts, stale UX polish.
+  - Starship default detection rules are the source of truth for runtime/tool
+    segment detection. Pure is a style/minimalism reference, not the detection
+    authority.
+  - Planned built-ins: `node_version`, `python_version`, `bun_version`,
+    `deno_version`, `nix_shell`, and later `aws`.
+  - Runtime segments are part of the default layout and render nothing when
+    their detection rules do not match.
+  - Nova does not add a `via` connector by default. A future formatting option
+    may allow users to add one explicitly.
+  - Bun and Node are mutually exclusive when both rules match, with Bun taking
+    priority.
+  - Nix follows Starship defaults: `IN_NIX_SHELL=pure|impure` is detected, and
+    the PATH heuristic is disabled by default.
+  - AWS is deferred until Nova can implement the Starship-style credential and
+    config checks rather than an environment-variable-only subset.
 - **M6 — Performance.** `zsh-bench` against the budgets in requirements,
   fast-path microbenchmarks, tuning, measured results documented.
 

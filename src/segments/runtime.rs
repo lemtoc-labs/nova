@@ -1,5 +1,6 @@
 //! Runtime and tool information collectors.
 
+use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -17,6 +18,21 @@ const RUST_VERSION_SEGMENT_ID: &str = "rust_version";
 const RUST_VERSION_ICON: &str = "";
 const RUSTC_ARGS: &[&str] = &["--version"];
 const RUST_MARKERS: &[&str] = &["Cargo.toml", "rust-toolchain", "rust-toolchain.toml"];
+const NODE_VERSION_SEGMENT_ID: &str = "node_version";
+const NODE_VERSION_ICON: &str = "";
+const NODE_ARGS: &[&str] = &["--version"];
+const NODE_DETECT_EXTENSIONS: &[&str] = &["js", "mjs", "cjs", "ts", "mts", "cts"];
+const NODE_DETECT_FILES: &[&str] = &["package.json", ".node-version", ".nvmrc"];
+const NODE_EXCLUDED_FILES: &[&str] = &[
+    "bunfig.toml",
+    "bun.lock",
+    "bun.lockb",
+    "deno.json",
+    "deno.jsonc",
+    "deno.lock",
+];
+const NODE_DETECT_FOLDERS: &[&str] = &["node_modules"];
+const NODE_EXCLUDED_FOLDERS: &[&str] = &["esy.lock"];
 
 #[derive(Debug, Error)]
 pub enum RuntimeCollectError {
@@ -43,6 +59,16 @@ pub fn rust_cache_key(cwd: &Path, config_generation: u64) -> Option<CacheKey> {
     ))
 }
 
+pub fn node_cache_key(cwd: &Path, config_generation: u64) -> Option<CacheKey> {
+    is_node_project_dir(cwd).then(|| {
+        CacheKey::new(
+            NODE_VERSION_SEGMENT_ID,
+            cwd.to_string_lossy(),
+            config_generation,
+        )
+    })
+}
+
 pub fn find_rust_project_root(cwd: &Path) -> Option<PathBuf> {
     let mut current = cwd;
 
@@ -58,11 +84,31 @@ pub fn find_rust_project_root(cwd: &Path) -> Option<PathBuf> {
     }
 }
 
+pub fn is_node_project_dir(cwd: &Path) -> bool {
+    current_dir_matches(
+        cwd,
+        RuntimeDetection {
+            files: NODE_DETECT_FILES,
+            excluded_files: NODE_EXCLUDED_FILES,
+            folders: NODE_DETECT_FOLDERS,
+            excluded_folders: NODE_EXCLUDED_FOLDERS,
+            extensions: NODE_DETECT_EXTENSIONS,
+        },
+    )
+}
+
 pub fn collect_rust_version(
     cwd: &Path,
     deadline: Instant,
 ) -> Result<Option<String>, RuntimeCollectError> {
     collect_rust_version_with_command(cwd, deadline, Path::new("rustc"))
+}
+
+pub fn collect_node_version(
+    cwd: &Path,
+    deadline: Instant,
+) -> Result<Option<String>, RuntimeCollectError> {
+    collect_node_version_with_command(cwd, deadline, Path::new("node"))
 }
 
 fn collect_rust_version_with_command(
@@ -108,11 +154,80 @@ fn collect_rust_version_with_command(
     Ok(parse_rustc_version(&String::from_utf8_lossy(&output)))
 }
 
+fn collect_node_version_with_command(
+    cwd: &Path,
+    deadline: Instant,
+    command: &Path,
+) -> Result<Option<String>, RuntimeCollectError> {
+    if !is_node_project_dir(cwd) {
+        return Ok(None);
+    }
+
+    let timeout = remaining_time(deadline)?;
+    let output = collect_command_output(command, NODE_ARGS, cwd, timeout)?;
+
+    Ok(parse_node_version(&String::from_utf8_lossy(&output)))
+}
+
+fn collect_command_output(
+    command: &Path,
+    args: &[&str],
+    cwd: &Path,
+    timeout: Duration,
+) -> Result<Vec<u8>, RuntimeCollectError> {
+    let mut child = Command::new(command)
+        .args(args)
+        .current_dir(cwd)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(RuntimeCollectError::Spawn)?;
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or(RuntimeCollectError::MissingStdout)?;
+    let stdout_reader = read_stdout(stdout);
+
+    let status = match child
+        .wait_timeout(timeout)
+        .map_err(RuntimeCollectError::Wait)?
+    {
+        Some(status) => status,
+        None => {
+            let _ = child.kill();
+            let _ = child.wait();
+            let _ = stdout_reader.join();
+            return Err(RuntimeCollectError::TimedOut);
+        }
+    };
+    let output = join_stdout(stdout_reader)?;
+
+    if !status.success() {
+        return Ok(Vec::new());
+    }
+
+    Ok(output)
+}
+
 pub fn parse_rustc_version(output: &str) -> Option<String> {
     let mut parts = output.split_whitespace();
     match (parts.next(), parts.next()) {
         (Some("rustc"), Some(version)) if !version.is_empty() => Some(version.to_string()),
         _ => None,
+    }
+}
+
+pub fn parse_node_version(output: &str) -> Option<String> {
+    let version = output
+        .split_whitespace()
+        .next()?
+        .trim_start_matches('v')
+        .trim();
+
+    if version.is_empty() {
+        None
+    } else {
+        Some(version.to_string())
     }
 }
 
@@ -126,6 +241,76 @@ pub fn render_rust_version(version: &str, config: &SegmentConfig) -> Option<Segm
         label_with_icon(version, config, RUST_VERSION_ICON),
         rust_style(config),
     ))
+}
+
+pub fn render_node_version(version: &str, config: &SegmentConfig) -> Option<SegmentContent> {
+    if version.is_empty() {
+        return None;
+    }
+
+    Some(SegmentContent::new(
+        NODE_VERSION_SEGMENT_ID,
+        label_with_icon(version, config, NODE_VERSION_ICON),
+        node_style(config),
+    ))
+}
+
+#[derive(Clone, Copy)]
+struct RuntimeDetection<'a> {
+    files: &'a [&'a str],
+    excluded_files: &'a [&'a str],
+    folders: &'a [&'a str],
+    excluded_folders: &'a [&'a str],
+    extensions: &'a [&'a str],
+}
+
+fn current_dir_matches(cwd: &Path, detection: RuntimeDetection<'_>) -> bool {
+    let Ok(entries) = fs::read_dir(cwd) else {
+        return false;
+    };
+
+    let mut has_positive_match = false;
+    for entry in entries.flatten() {
+        let file_name = entry.file_name();
+        let Some(file_name) = file_name.to_str() else {
+            continue;
+        };
+        let is_dir = entry.file_type().is_ok_and(|file_type| file_type.is_dir());
+
+        if is_dir {
+            if detection.excluded_folders.contains(&file_name) {
+                return false;
+            }
+            if detection.folders.contains(&file_name) {
+                has_positive_match = true;
+            }
+        } else {
+            if detection.excluded_files.contains(&file_name) {
+                return false;
+            }
+            if detection.files.contains(&file_name)
+                || file_has_any_extension(file_name, detection.extensions)
+            {
+                has_positive_match = true;
+            }
+        }
+    }
+
+    has_positive_match
+}
+
+fn file_has_any_extension(file_name: &str, extensions: &[&str]) -> bool {
+    if extensions.is_empty() || file_name.starts_with('.') {
+        return false;
+    }
+
+    let path = Path::new(file_name);
+    path.extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| extensions.contains(&extension))
+        || file_name
+            .split_once('.')
+            .is_some_and(|(_name, extension)| extensions.contains(&extension))
 }
 
 fn remaining_time(deadline: Instant) -> Result<Duration, RuntimeCollectError> {
@@ -169,6 +354,18 @@ fn rust_style(config: &SegmentConfig) -> Style {
     }
 }
 
+fn node_style(config: &SegmentConfig) -> Style {
+    if config.style.fg.is_some() || config.style.bg.is_some() || config.style.bold {
+        Style::from(&config.style)
+    } else {
+        Style {
+            fg: Some("green".to_string()),
+            bg: None,
+            bold: true,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::fs;
@@ -204,12 +401,85 @@ mod tests {
     }
 
     #[test]
+    fn detects_node_projects_from_starship_default_conditions() {
+        for marker in ["package.json", ".node-version", ".nvmrc"] {
+            let tempdir = tempfile::tempdir().expect("tempdir should be created");
+            fs::write(tempdir.path().join(marker), "").expect("marker should be written");
+
+            assert!(
+                is_node_project_dir(tempdir.path()),
+                "{marker} should trigger node detection"
+            );
+        }
+
+        for file in [
+            "index.js",
+            "index.mjs",
+            "index.cjs",
+            "index.ts",
+            "index.mts",
+            "index.cts",
+        ] {
+            let tempdir = tempfile::tempdir().expect("tempdir should be created");
+            fs::write(tempdir.path().join(file), "").expect("source file should be written");
+
+            assert!(
+                is_node_project_dir(tempdir.path()),
+                "{file} should trigger node detection"
+            );
+        }
+
+        let tempdir = tempfile::tempdir().expect("tempdir should be created");
+        fs::create_dir(tempdir.path().join("node_modules"))
+            .expect("node_modules should be created");
+
+        assert!(is_node_project_dir(tempdir.path()));
+    }
+
+    #[test]
+    fn excludes_node_projects_with_starship_default_negative_conditions() {
+        for excluded in [
+            "bunfig.toml",
+            "bun.lock",
+            "bun.lockb",
+            "deno.json",
+            "deno.jsonc",
+            "deno.lock",
+        ] {
+            let tempdir = tempfile::tempdir().expect("tempdir should be created");
+            fs::write(tempdir.path().join("package.json"), "{}").expect("marker should be written");
+            fs::write(tempdir.path().join(excluded), "").expect("excluded file should be written");
+
+            assert!(
+                !is_node_project_dir(tempdir.path()),
+                "{excluded} should suppress node detection"
+            );
+        }
+
+        let tempdir = tempfile::tempdir().expect("tempdir should be created");
+        fs::write(tempdir.path().join("package.json"), "{}").expect("marker should be written");
+        fs::create_dir(tempdir.path().join("esy.lock")).expect("esy.lock should be created");
+
+        assert!(!is_node_project_dir(tempdir.path()));
+    }
+
+    #[test]
     fn parses_rustc_version_output() {
         assert_eq!(
             parse_rustc_version("rustc 1.96.1 (abc 2026-01-01)\n"),
             Some("1.96.1".to_string())
         );
         assert_eq!(parse_rustc_version("not rustc\n"), None);
+    }
+
+    #[test]
+    fn parses_node_version_output() {
+        assert_eq!(
+            parse_node_version("v22.17.0\n"),
+            Some("22.17.0".to_string())
+        );
+        assert_eq!(parse_node_version("22.17.0\n"), Some("22.17.0".to_string()));
+        assert_eq!(parse_node_version("\n"), None);
     }
 
     #[test]
@@ -252,6 +522,31 @@ mod tests {
     }
 
     #[test]
+    fn renders_node_version_segment() {
+        let segment = render_node_version("22.17.0", &SegmentConfig::default())
+            .expect("version should render");
+
+        assert_eq!(segment.id, "node_version");
+        assert_eq!(segment.text, " 22.17.0");
+        assert_eq!(segment.style.fg.as_deref(), Some("green"));
+        assert!(segment.style.bold);
+    }
+
+    #[test]
+    fn renders_node_version_with_configured_icon() {
+        let segment = render_node_version(
+            "22.17.0",
+            &SegmentConfig {
+                icon: Some("node".to_string()),
+                ..SegmentConfig::default()
+            },
+        )
+        .expect("version should render");
+
+        assert_eq!(segment.text, "node 22.17.0");
+    }
+
+    #[test]
     #[cfg(unix)]
     fn collects_rust_version_with_timeout_bound_command() {
         let tempdir = tempfile::tempdir().expect("tempdir should be created");
@@ -291,6 +586,39 @@ mod tests {
             tempdir.path(),
             Instant::now() + Duration::from_millis(50),
             &rustc,
+        );
+
+        assert!(matches!(result, Err(RuntimeCollectError::TimedOut)));
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn collects_node_version_with_timeout_bound_command() {
+        let tempdir = tempfile::tempdir().expect("tempdir should be created");
+        fs::write(tempdir.path().join("package.json"), "{}").expect("marker should be written");
+        let node = write_script(tempdir.path(), "node", "printf 'v22.17.0\\n'\n");
+
+        let collected = collect_node_version_with_command(
+            tempdir.path(),
+            Instant::now() + Duration::from_secs(1),
+            &node,
+        )
+        .expect("collector should succeed");
+
+        assert_eq!(collected, Some("22.17.0".to_string()));
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn times_out_slow_node_version_commands() {
+        let tempdir = tempfile::tempdir().expect("tempdir should be created");
+        fs::write(tempdir.path().join("package.json"), "{}").expect("marker should be written");
+        let node = write_script(tempdir.path(), "slow-node", "sleep 2\n");
+
+        let result = collect_node_version_with_command(
+            tempdir.path(),
+            Instant::now() + Duration::from_millis(50),
+            &node,
         );
 
         assert!(matches!(result, Err(RuntimeCollectError::TimedOut)));

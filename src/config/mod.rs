@@ -17,6 +17,7 @@ const KNOWN_SEGMENTS: &[&str] = &[
     "exit_status",
     "git_branch",
     "git_status",
+    "node_version",
     "prompt_char",
     "rust_version",
     "ssh",
@@ -154,6 +155,7 @@ impl Default for LayoutConfig {
                     "git_branch".to_string(),
                     "git_status".to_string(),
                     "rust_version".to_string(),
+                    "node_version".to_string(),
                 ],
                 right: vec!["duration".to_string()],
             },
@@ -176,7 +178,13 @@ mod tests {
         assert_eq!(config.layout.lines, 2);
         assert_eq!(
             config.layout.line1.left,
-            ["dir", "git_branch", "git_status", "rust_version"]
+            [
+                "dir",
+                "git_branch",
+                "git_status",
+                "rust_version",
+                "node_version"
+            ]
         );
         assert_eq!(config.layout.line1.right, ["duration"]);
         assert_eq!(config.layout.line2.left, ["exit_status", "prompt_char"]);
