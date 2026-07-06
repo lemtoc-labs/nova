@@ -4,10 +4,21 @@ set -euo pipefail
 
 input="${1:?Usage: render-zsh-bench-comment.sh <input.json> <output.md>}"
 output="${2:?Usage: render-zsh-bench-comment.sh <input.json> <output.md>}"
+commit_sha="${NOVA_BENCH_COMMIT_SHA:-${GITHUB_SHA:-}}"
+commit_url="${NOVA_BENCH_COMMIT_URL:-}"
+workflow_url=""
 
 if [[ ! -r "$input" ]]; then
   echo "Benchmark result file not found: $input" >&2
   exit 1
+fi
+
+if [[ -z "$commit_url" && -n "$commit_sha" && -n "${GITHUB_SERVER_URL:-}" && -n "${GITHUB_REPOSITORY:-}" ]]; then
+  commit_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/commit/${commit_sha}"
+fi
+
+if [[ -n "${GITHUB_SERVER_URL:-}" && -n "${GITHUB_REPOSITORY:-}" && -n "${GITHUB_RUN_ID:-}" ]]; then
+  workflow_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
 fi
 
 {
@@ -49,9 +60,13 @@ fi
   ' "$input"
   echo
   echo "Red status fails CI. Values are medians from zsh-bench raw iterations."
-  if [[ -n "${GITHUB_SERVER_URL:-}" && -n "${GITHUB_REPOSITORY:-}" && -n "${GITHUB_RUN_ID:-}" ]]; then
+  if [[ -n "$commit_sha" && -n "$commit_url" ]]; then
     echo
-    echo "[Workflow run](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID})"
+    echo "$commit_url"
+  fi
+  if [[ -n "$workflow_url" ]]; then
+    echo
+    echo "[Workflow run](${workflow_url})"
   fi
 } > "$output"
 

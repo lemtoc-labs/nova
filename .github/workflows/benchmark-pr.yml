@@ -43,6 +43,9 @@ jobs:
         run: .github/scripts/convert-zsh-bench.sh zsh-bench-result.txt benchmark-result.json
 
       - name: Render benchmark comment
+        env:
+          NOVA_BENCH_COMMIT_SHA: ${{ github.event.pull_request.head.sha }}
+          NOVA_BENCH_COMMIT_URL: ${{ github.event.pull_request.head.repo.html_url }}/commit/${{ github.event.pull_request.head.sha }}
         run: .github/scripts/render-zsh-bench-comment.sh benchmark-result.json zsh-bench-comment.md
 
       - name: Write benchmark summary
