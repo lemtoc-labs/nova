@@ -99,7 +99,7 @@ impl Default for LayoutConfig {
                 right: vec!["duration".to_string()],
             },
             line2: LineConfig {
-                left: vec!["prompt_char".to_string()],
+                left: vec!["exit_status".to_string(), "prompt_char".to_string()],
                 right: Vec::new(),
             },
         }
@@ -117,7 +117,7 @@ mod tests {
         assert_eq!(config.layout.lines, 2);
         assert_eq!(config.layout.line1.left, ["dir"]);
         assert_eq!(config.layout.line1.right, ["duration"]);
-        assert_eq!(config.layout.line2.left, ["prompt_char"]);
+        assert_eq!(config.layout.line2.left, ["exit_status", "prompt_char"]);
     }
 
     #[test]

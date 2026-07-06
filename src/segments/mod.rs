@@ -2,6 +2,7 @@
 
 pub mod dir;
 pub mod duration;
+pub mod exit_status;
 pub mod git;
 pub mod prompt_char;
 pub mod runtime;
@@ -57,6 +58,7 @@ pub fn render_sync_segment(
     match id {
         "dir" => dir::DirSegment.render(state, config),
         "duration" => duration::DurationSegment.render(state, config),
+        "exit_status" => exit_status::ExitStatusSegment.render(state, config),
         "prompt_char" => prompt_char::PromptCharSegment.render(state, config),
         "ssh" => ssh::SshSegment.render(state, config),
         _ => None,

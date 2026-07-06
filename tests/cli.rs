@@ -53,6 +53,7 @@ fn renders_prompt_command() {
         .assert()
         .success()
         .stdout(predicate::str::contains("/tmp/nova"))
+        .stdout(predicate::str::contains("[1]"))
         .stdout(predicate::str::contains("❯"));
 }
 

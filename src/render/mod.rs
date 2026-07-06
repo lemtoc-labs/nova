@@ -210,7 +210,7 @@ mod tests {
             render(&config, &state).prompt,
             @r###"
 /Users/me/projects/nova     2.3s
-%{[1;31m%}❯%{[0m%}
+%{[1;31m%}[1]%{[0m%} %{[1;31m%}❯%{[0m%}
 "###
         );
     }
