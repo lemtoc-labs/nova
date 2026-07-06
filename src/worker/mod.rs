@@ -6,9 +6,9 @@ pub mod protocol;
 use std::collections::BTreeSet;
 use std::fs::OpenOptions;
 use std::io::{Read, Write};
-use std::os::unix::fs::OpenOptionsExt;
 use std::path::PathBuf;
 use std::sync::mpsc;
+use std::thread;
 use std::time::{Duration, Instant};
 
 use thiserror::Error;
@@ -72,9 +72,8 @@ pub enum WorkerError {
 pub fn run(options: WorkerOptions) -> Result<(), WorkerError> {
     let request_path = options.runtime_dir.join("req");
     let response_path = options.runtime_dir.join("resp");
-    let mut request = OpenOptions::new()
+    let request = OpenOptions::new()
         .read(true)
-        .custom_flags(libc::O_NONBLOCK)
         .open(&request_path)
         .map_err(|source| WorkerError::OpenRequest {
             path: request_path,
@@ -95,8 +94,10 @@ pub fn run(options: WorkerOptions) -> Result<(), WorkerError> {
         },
     )?;
 
+    let (request_events, request_event_receiver) = mpsc::channel::<RequestEvent>();
+    spawn_request_reader(request, request_events);
+
     let mut decoder = FrameDecoder::default();
-    let mut buffer = [0_u8; 4096];
     let mut cache = SegmentCache::new(CACHE_CAPACITY);
     let (job_results, job_result_receiver) = mpsc::channel::<JobResult<AsyncJobSegments>>();
     let job_pool = JobPool::new(MAX_CONCURRENCY, job_results);
@@ -113,62 +114,111 @@ pub fn run(options: WorkerOptions) -> Result<(), WorkerError> {
             &mut active_prompt,
         )?;
 
-        match request.read(&mut buffer) {
-            Ok(0) => return Ok(()),
-            Ok(bytes_read) => {
-                let chunk = String::from_utf8_lossy(&buffer[..bytes_read]);
-                for frame in decoder.push(&chunk) {
-                    let Ok(ClientRecord::Render(request)) = decode_client_record(&frame) else {
-                        continue;
-                    };
-                    let worker_config = load_worker_config(
-                        &mut config_state,
-                        &mut warned_config_error,
-                        &mut warned_config_warnings,
-                    );
-                    let config = worker_config.config;
-                    let async_values =
-                        async_values(&cache, &request.state, &config, worker_config.generation);
-                    let output = render_with_async(&config, &request.state, &async_values);
-                    let status = render_status(&config, &async_values);
-                    write_record(
-                        &mut response,
-                        &WorkerRecord::Prompt {
-                            generation: request.generation,
-                            status,
-                            output: output.clone(),
-                        },
-                    )?;
-
-                    active_prompt = Some(ActivePrompt {
-                        generation: request.generation,
-                        state: request.state.clone(),
-                        config: config.clone(),
-                        config_generation: worker_config.generation,
-                        output,
-                    });
-                    schedule_async_refreshes(
-                        &job_pool,
-                        &mut cache,
-                        request.generation,
-                        request.state.clone(),
-                        &config,
-                        worker_config.generation,
-                    );
-                }
-            }
-            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
-                wait_for_job_result(
-                    &job_result_receiver,
+        match request_event_receiver.recv_timeout(EVENT_POLL_INTERVAL) {
+            Ok(RequestEvent::Chunk(chunk)) => {
+                handle_request_chunk(
+                    &chunk,
+                    &mut decoder,
+                    &mut config_state,
+                    &mut warned_config_error,
+                    &mut warned_config_warnings,
                     &mut cache,
                     &mut response,
                     &mut active_prompt,
+                    &job_pool,
                 )?;
             }
-            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
-            Err(error) => return Err(WorkerError::Read(error)),
+            Ok(RequestEvent::Closed) | Err(mpsc::RecvTimeoutError::Disconnected) => return Ok(()),
+            Ok(RequestEvent::Error(error)) => return Err(WorkerError::Read(error)),
+            Err(mpsc::RecvTimeoutError::Timeout) => {}
         }
     }
+}
+
+#[derive(Debug)]
+enum RequestEvent {
+    Chunk(Vec<u8>),
+    Closed,
+    Error(std::io::Error),
+}
+
+fn spawn_request_reader(mut request: std::fs::File, sender: mpsc::Sender<RequestEvent>) {
+    thread::spawn(move || {
+        let mut buffer = [0_u8; 4096];
+        loop {
+            match request.read(&mut buffer) {
+                Ok(0) => {
+                    let _ = sender.send(RequestEvent::Closed);
+                    return;
+                }
+                Ok(bytes_read) => {
+                    if sender
+                        .send(RequestEvent::Chunk(buffer[..bytes_read].to_vec()))
+                        .is_err()
+                    {
+                        return;
+                    }
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
+                Err(error) => {
+                    let _ = sender.send(RequestEvent::Error(error));
+                    return;
+                }
+            }
+        }
+    });
+}
+
+#[allow(clippy::too_many_arguments)]
+fn handle_request_chunk(
+    chunk: &[u8],
+    decoder: &mut FrameDecoder,
+    config_state: &mut ConfigState,
+    warned_config_error: &mut bool,
+    warned_config_warnings: &mut BTreeSet<ConfigWarning>,
+    cache: &mut SegmentCache,
+    response: &mut impl Write,
+    active_prompt: &mut Option<ActivePrompt>,
+    job_pool: &JobPool<AsyncJobSegments>,
+) -> Result<(), WorkerError> {
+    let chunk = String::from_utf8_lossy(chunk);
+    for frame in decoder.push(&chunk) {
+        let Ok(ClientRecord::Render(request)) = decode_client_record(&frame) else {
+            continue;
+        };
+        let worker_config =
+            load_worker_config(config_state, warned_config_error, warned_config_warnings);
+        let config = worker_config.config;
+        let async_values = async_values(cache, &request.state, &config, worker_config.generation);
+        let output = render_with_async(&config, &request.state, &async_values);
+        let status = render_status(&config, &async_values);
+        write_record(
+            response,
+            &WorkerRecord::Prompt {
+                generation: request.generation,
+                status,
+                output: output.clone(),
+            },
+        )?;
+
+        active_prompt.replace(ActivePrompt {
+            generation: request.generation,
+            state: request.state.clone(),
+            config: config.clone(),
+            config_generation: worker_config.generation,
+            output,
+        });
+        schedule_async_refreshes(
+            job_pool,
+            cache,
+            request.generation,
+            request.state,
+            &config,
+            worker_config.generation,
+        );
+    }
+
+    Ok(())
 }
 
 #[derive(Clone, Debug)]
@@ -214,18 +264,6 @@ fn drain_job_results(
     }
 
     Ok(())
-}
-
-fn wait_for_job_result(
-    receiver: &mpsc::Receiver<JobResult<AsyncJobSegments>>,
-    cache: &mut SegmentCache,
-    response: &mut impl Write,
-    active_prompt: &mut Option<ActivePrompt>,
-) -> Result<(), WorkerError> {
-    match receiver.recv_timeout(EVENT_POLL_INTERVAL) {
-        Ok(result) => handle_job_result(result, cache, response, active_prompt),
-        Err(mpsc::RecvTimeoutError::Timeout | mpsc::RecvTimeoutError::Disconnected) => Ok(()),
-    }
 }
 
 fn handle_job_result(
