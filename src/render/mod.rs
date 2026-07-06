@@ -267,6 +267,7 @@ mod tests {
             duration_ms: Some(2_340),
             columns: 32,
             keymap: Keymap::Main,
+            env: Default::default(),
         };
         let config = Config::default();
 
@@ -287,6 +288,7 @@ mod tests {
             duration_ms: Some(5_000),
             columns: 20,
             keymap: Keymap::Main,
+            env: Default::default(),
         };
         let config = Config {
             layout: LayoutConfig {
@@ -313,6 +315,7 @@ mod tests {
             duration_ms: None,
             columns: 80,
             keymap: Keymap::Main,
+            env: Default::default(),
         };
         let config = Config {
             layout: LayoutConfig {
@@ -363,6 +366,7 @@ mod tests {
             duration_ms: None,
             columns: 80,
             keymap: Keymap::Main,
+            env: Default::default(),
         };
         let config = Config {
             layout: LayoutConfig {
@@ -410,6 +414,7 @@ mod tests {
             duration_ms: None,
             columns: 80,
             keymap: Keymap::Main,
+            env: Default::default(),
         };
 
         assert!(
@@ -428,6 +433,7 @@ mod tests {
                 duration_ms: Some(10_000),
                 columns,
                 keymap: Keymap::Main,
+                env: Default::default(),
             };
             let output = render(&Config::default(), &state);
             let first_line = output.prompt.lines().next().unwrap_or_default();

@@ -5,9 +5,9 @@ use std::path::PathBuf;
 use thiserror::Error;
 
 use crate::render::LoweredPrompt;
-use crate::state::{Keymap, PromptState};
+use crate::state::{Keymap, PromptEnv, PromptState};
 
-pub const VERSION: &str = "1";
+pub const VERSION: &str = "2";
 const FIELD_SEPARATOR: char = '\0';
 const RECORD_SEPARATOR: char = '\x1e';
 
@@ -101,6 +101,13 @@ pub fn encode_client_record(record: &ClientRecord) -> String {
                 .unwrap_or_default(),
             request.state.columns.to_string(),
             keymap_name(request.state.keymap).to_string(),
+            request
+                .state
+                .env
+                .virtual_env
+                .as_ref()
+                .map(|virtual_env| virtual_env.to_string_lossy().into_owned())
+                .unwrap_or_default(),
         ]),
     }
 }
@@ -113,7 +120,7 @@ pub fn decode_client_record(record: &str) -> Result<ClientRecord, ProtocolError>
 
     match record_type.as_str() {
         "R" => {
-            expect_field_count(record_type, fields.len(), 7)?;
+            expect_field_count(record_type, fields.len(), 8)?;
             let generation = parse_u64("gen", &fields[1])?;
             let exit_status = parse_i32("exit_status", &fields[3])?;
             let duration_ms = if fields[4].is_empty() {
@@ -132,6 +139,9 @@ pub fn decode_client_record(record: &str) -> Result<ClientRecord, ProtocolError>
                     duration_ms,
                     columns,
                     keymap,
+                    env: PromptEnv {
+                        virtual_env: non_empty_path(&fields[7]),
+                    },
                 },
             }))
         }
@@ -294,6 +304,10 @@ fn keymap_name(keymap: Keymap) -> &'static str {
     }
 }
 
+fn non_empty_path(value: &str) -> Option<PathBuf> {
+    (!value.is_empty()).then(|| PathBuf::from(value))
+}
+
 fn status_name(status: RenderStatus) -> &'static str {
     match status {
         RenderStatus::Final => "final",
@@ -315,6 +329,9 @@ mod tests {
                 duration_ms: Some(123),
                 columns: 80,
                 keymap: Keymap::ViCommand,
+                env: PromptEnv {
+                    virtual_env: Some(PathBuf::from("/tmp/nova-venv")),
+                },
             },
         });
 
@@ -351,6 +368,7 @@ mod tests {
                 duration_ms: None,
                 columns: 80,
                 keymap: Keymap::Main,
+                env: PromptEnv::default(),
             },
         });
         let second = ClientRecord::Render(RenderRequest {
@@ -361,6 +379,7 @@ mod tests {
                 duration_ms: Some(5),
                 columns: 40,
                 keymap: Keymap::Main,
+                env: PromptEnv::default(),
             },
         });
         let combined = format!(

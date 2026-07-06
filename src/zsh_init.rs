@@ -40,4 +40,11 @@ mod tests {
         assert!(script.contains("autoload -Uz add-zsh-hook add-zle-hook-widget"));
         assert!(script.contains("add-zle-hook-widget line-init _nova_zle_line_init"));
     }
+
+    #[test]
+    fn sends_virtual_env_in_render_requests() {
+        let script = render_init_script(Path::new("/tmp/nova"));
+
+        assert!(script.contains("${KEYMAP:-main}${_nova_nul}${VIRTUAL_ENV:-}"));
+    }
 }

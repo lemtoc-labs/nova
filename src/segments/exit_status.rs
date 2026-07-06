@@ -52,6 +52,7 @@ mod tests {
             duration_ms: None,
             columns: 80,
             keymap: Keymap::Main,
+            env: Default::default(),
         };
 
         assert_eq!(segment.render(&state, &SegmentConfig::default()), None);
@@ -66,6 +67,7 @@ mod tests {
             duration_ms: None,
             columns: 80,
             keymap: Keymap::Main,
+            env: Default::default(),
         };
 
         let rendered = segment

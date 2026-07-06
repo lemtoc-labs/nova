@@ -9,6 +9,12 @@ pub struct PromptState {
     pub duration_ms: Option<u64>,
     pub columns: u16,
     pub keymap: Keymap,
+    pub env: PromptEnv,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct PromptEnv {
+    pub virtual_env: Option<PathBuf>,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]

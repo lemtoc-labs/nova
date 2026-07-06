@@ -24,10 +24,11 @@ use crate::segments::git::{
 };
 use crate::segments::runtime::{
     bun_cache_key, collect_bun_version, collect_deno_version, collect_node_version,
-    collect_rust_version, deno_cache_key, node_cache_key, render_bun_version, render_deno_version,
-    render_node_version, render_rust_version, rust_cache_key,
+    collect_python_version, collect_rust_version, deno_cache_key, node_cache_key, python_cache_key,
+    render_bun_version, render_deno_version, render_node_version, render_python_version,
+    render_rust_version, rust_cache_key,
 };
-use crate::state::PromptState;
+use crate::state::{PromptEnv, PromptState};
 use jobs::{JobOutcome, JobPool, JobResult};
 use protocol::{
     ClientRecord, FrameDecoder, RenderStatus, WorkerRecord, decode_client_record,
@@ -126,12 +127,8 @@ pub fn run(options: WorkerOptions) -> Result<(), WorkerError> {
                         &mut warned_config_warnings,
                     );
                     let config = worker_config.config;
-                    let async_values = async_values(
-                        &cache,
-                        &request.state.cwd,
-                        &config,
-                        worker_config.generation,
-                    );
+                    let async_values =
+                        async_values(&cache, &request.state, &config, worker_config.generation);
                     let output = render_with_async(&config, &request.state, &async_values);
                     let status = render_status(&config, &async_values);
                     write_record(
@@ -154,7 +151,7 @@ pub fn run(options: WorkerOptions) -> Result<(), WorkerError> {
                         &job_pool,
                         &mut cache,
                         request.generation,
-                        request.state.cwd,
+                        request.state.clone(),
                         &config,
                         worker_config.generation,
                     );
@@ -276,7 +273,7 @@ fn write_update_if_active(
 
     let async_values = async_values(
         cache,
-        &active_prompt.state.cwd,
+        &active_prompt.state,
         &active_prompt.config,
         active_prompt.config_generation,
     );
@@ -346,12 +343,13 @@ fn warn_config_warnings(config: &Config, warned_config_warnings: &mut BTreeSet<C
 
 fn async_values(
     cache: &SegmentCache,
-    cwd: &std::path::Path,
+    state: &PromptState,
     config: &Config,
     config_generation: u64,
 ) -> AsyncSegmentValues {
     let now = Instant::now();
     let mut values = AsyncSegmentValues::new();
+    let cwd = &state.cwd;
 
     if config_uses_any_segment(config, &["git_branch", "git_status"])
         && let Some(status_key) = git_cache_key(cwd, config_generation)
@@ -389,6 +387,14 @@ fn async_values(
         values.insert("deno_version".to_string(), cache.lookup(&key, now, ttl));
     }
 
+    if config_uses_segment(config, "python_version")
+        && let Some(key) =
+            python_cache_key(cwd, state.env.virtual_env.as_deref(), config_generation)
+    {
+        let ttl = segment_ttl(&config.segment("python_version"), RUNTIME_REFRESH_TTL);
+        values.insert("python_version".to_string(), cache.lookup(&key, now, ttl));
+    }
+
     if config_uses_segment(config, "node_version")
         && let Some(key) = node_cache_key(cwd, config_generation)
     {
@@ -403,10 +409,12 @@ fn schedule_async_refreshes(
     pool: &JobPool<AsyncJobSegments>,
     cache: &mut SegmentCache,
     generation: u64,
-    cwd: PathBuf,
+    state: PromptState,
     config: &Config,
     config_generation: u64,
 ) {
+    let cwd = state.cwd;
+    let env = state.env;
     schedule_git_refresh(
         pool,
         cache,
@@ -436,6 +444,15 @@ fn schedule_async_refreshes(
         cache,
         generation,
         cwd.clone(),
+        config,
+        config_generation,
+    );
+    schedule_python_refresh(
+        pool,
+        cache,
+        generation,
+        cwd.clone(),
+        env,
         config,
         config_generation,
     );
@@ -664,6 +681,50 @@ fn schedule_deno_refresh(
             .ok()
             .flatten()
             .and_then(|version| render_deno_version(&version, &deno_config));
+        AsyncJobSegments {
+            segments: vec![AsyncJobSegment {
+                key: job_key,
+                content,
+            }],
+        }
+    });
+
+    if spawn_result.is_err() {
+        cache.complete_failure(key, Instant::now());
+    }
+}
+
+fn schedule_python_refresh(
+    pool: &JobPool<AsyncJobSegments>,
+    cache: &mut SegmentCache,
+    generation: u64,
+    cwd: PathBuf,
+    env: PromptEnv,
+    config: &Config,
+    config_generation: u64,
+) {
+    if !config_uses_segment(config, "python_version") {
+        return;
+    }
+
+    let Some(key) = python_cache_key(&cwd, env.virtual_env.as_deref(), config_generation) else {
+        return;
+    };
+
+    let python_config = config.segment("python_version");
+    let ttl = segment_ttl(&python_config, RUNTIME_REFRESH_TTL);
+    if !cache.needs_refresh(&key, Instant::now(), ttl) {
+        return;
+    }
+
+    cache.mark_inflight(key.clone());
+    let timeout = segment_timeout(&python_config, RUNTIME_TIMEOUT);
+    let job_key = key.clone();
+    let spawn_result = pool.spawn(generation, key.clone(), timeout, move |deadline| {
+        let content = collect_python_version(&cwd, env.virtual_env.as_deref(), deadline)
+            .ok()
+            .flatten()
+            .and_then(|version| render_python_version(&version, &python_config));
         AsyncJobSegments {
             segments: vec![AsyncJobSegment {
                 key: job_key,

@@ -55,6 +55,7 @@ mod tests {
             duration_ms: None,
             columns: 80,
             keymap: Keymap::Main,
+            env: Default::default(),
         };
 
         let rendered = segment
