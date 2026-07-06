@@ -1,0 +1,1 @@
+//! zsh adapter script embedding.

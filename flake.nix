@@ -45,6 +45,7 @@
               cargo
               rustfmt
               rust-src
+              llvm-tools
             ]
           );
 
