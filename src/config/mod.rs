@@ -15,6 +15,7 @@ const KNOWN_SEGMENTS: &[&str] = &[
     "dir",
     "duration",
     "exit_status",
+    "bun_version",
     "git_branch",
     "git_status",
     "node_version",
@@ -155,6 +156,7 @@ impl Default for LayoutConfig {
                     "git_branch".to_string(),
                     "git_status".to_string(),
                     "rust_version".to_string(),
+                    "bun_version".to_string(),
                     "node_version".to_string(),
                 ],
                 right: vec!["duration".to_string()],
@@ -183,6 +185,7 @@ mod tests {
                 "git_branch",
                 "git_status",
                 "rust_version",
+                "bun_version",
                 "node_version"
             ]
         );

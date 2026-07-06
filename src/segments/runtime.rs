@@ -18,6 +18,10 @@ const RUST_VERSION_SEGMENT_ID: &str = "rust_version";
 const RUST_VERSION_ICON: &str = "";
 const RUSTC_ARGS: &[&str] = &["--version"];
 const RUST_MARKERS: &[&str] = &["Cargo.toml", "rust-toolchain", "rust-toolchain.toml"];
+const BUN_VERSION_SEGMENT_ID: &str = "bun_version";
+const BUN_VERSION_ICON: &str = "🥟";
+const BUN_ARGS: &[&str] = &["--version"];
+const BUN_DETECT_FILES: &[&str] = &["bun.lock", "bun.lockb", "bunfig.toml"];
 const NODE_VERSION_SEGMENT_ID: &str = "node_version";
 const NODE_VERSION_ICON: &str = "";
 const NODE_ARGS: &[&str] = &["--version"];
@@ -69,6 +73,16 @@ pub fn node_cache_key(cwd: &Path, config_generation: u64) -> Option<CacheKey> {
     })
 }
 
+pub fn bun_cache_key(cwd: &Path, config_generation: u64) -> Option<CacheKey> {
+    is_bun_project_dir(cwd).then(|| {
+        CacheKey::new(
+            BUN_VERSION_SEGMENT_ID,
+            cwd.to_string_lossy(),
+            config_generation,
+        )
+    })
+}
+
 pub fn find_rust_project_root(cwd: &Path) -> Option<PathBuf> {
     let mut current = cwd;
 
@@ -97,6 +111,19 @@ pub fn is_node_project_dir(cwd: &Path) -> bool {
     )
 }
 
+pub fn is_bun_project_dir(cwd: &Path) -> bool {
+    current_dir_matches(
+        cwd,
+        RuntimeDetection {
+            files: BUN_DETECT_FILES,
+            excluded_files: &[],
+            folders: &[],
+            excluded_folders: &[],
+            extensions: &[],
+        },
+    )
+}
+
 pub fn collect_rust_version(
     cwd: &Path,
     deadline: Instant,
@@ -109,6 +136,13 @@ pub fn collect_node_version(
     deadline: Instant,
 ) -> Result<Option<String>, RuntimeCollectError> {
     collect_node_version_with_command(cwd, deadline, Path::new("node"))
+}
+
+pub fn collect_bun_version(
+    cwd: &Path,
+    deadline: Instant,
+) -> Result<Option<String>, RuntimeCollectError> {
+    collect_bun_version_with_command(cwd, deadline, Path::new("bun"))
 }
 
 fn collect_rust_version_with_command(
@@ -167,6 +201,21 @@ fn collect_node_version_with_command(
     let output = collect_command_output(command, NODE_ARGS, cwd, timeout)?;
 
     Ok(parse_node_version(&String::from_utf8_lossy(&output)))
+}
+
+fn collect_bun_version_with_command(
+    cwd: &Path,
+    deadline: Instant,
+    command: &Path,
+) -> Result<Option<String>, RuntimeCollectError> {
+    if !is_bun_project_dir(cwd) {
+        return Ok(None);
+    }
+
+    let timeout = remaining_time(deadline)?;
+    let output = collect_command_output(command, BUN_ARGS, cwd, timeout)?;
+
+    Ok(parse_bun_version(&String::from_utf8_lossy(&output)))
 }
 
 fn collect_command_output(
@@ -231,6 +280,16 @@ pub fn parse_node_version(output: &str) -> Option<String> {
     }
 }
 
+pub fn parse_bun_version(output: &str) -> Option<String> {
+    let version = output.trim();
+
+    if version.is_empty() {
+        None
+    } else {
+        Some(version.to_string())
+    }
+}
+
 pub fn render_rust_version(version: &str, config: &SegmentConfig) -> Option<SegmentContent> {
     if version.is_empty() {
         return None;
@@ -252,6 +311,18 @@ pub fn render_node_version(version: &str, config: &SegmentConfig) -> Option<Segm
         NODE_VERSION_SEGMENT_ID,
         label_with_icon(version, config, NODE_VERSION_ICON),
         node_style(config),
+    ))
+}
+
+pub fn render_bun_version(version: &str, config: &SegmentConfig) -> Option<SegmentContent> {
+    if version.is_empty() {
+        return None;
+    }
+
+    Some(SegmentContent::new(
+        BUN_VERSION_SEGMENT_ID,
+        label_with_icon(version, config, BUN_VERSION_ICON),
+        bun_style(config),
     ))
 }
 
@@ -366,6 +437,18 @@ fn node_style(config: &SegmentConfig) -> Style {
     }
 }
 
+fn bun_style(config: &SegmentConfig) -> Style {
+    if config.style.fg.is_some() || config.style.bg.is_some() || config.style.bold {
+        Style::from(&config.style)
+    } else {
+        Style {
+            fg: Some("red".to_string()),
+            bg: None,
+            bold: true,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::fs;
@@ -464,6 +547,37 @@ mod tests {
     }
 
     #[test]
+    fn detects_bun_projects_from_starship_default_conditions() {
+        for marker in ["bun.lock", "bun.lockb", "bunfig.toml"] {
+            let tempdir = tempfile::tempdir().expect("tempdir should be created");
+            fs::write(tempdir.path().join(marker), "").expect("marker should be written");
+
+            assert!(
+                is_bun_project_dir(tempdir.path()),
+                "{marker} should trigger bun detection"
+            );
+        }
+    }
+
+    #[test]
+    fn bun_projects_suppress_node_detection() {
+        for marker in ["bun.lock", "bun.lockb", "bunfig.toml"] {
+            let tempdir = tempfile::tempdir().expect("tempdir should be created");
+            fs::write(tempdir.path().join("package.json"), "{}").expect("marker should be written");
+            fs::write(tempdir.path().join(marker), "").expect("bun marker should be written");
+
+            assert!(
+                !is_node_project_dir(tempdir.path()),
+                "{marker} should suppress node detection"
+            );
+            assert!(
+                is_bun_project_dir(tempdir.path()),
+                "{marker} should trigger bun detection"
+            );
+        }
+    }
+
+    #[test]
     fn parses_rustc_version_output() {
         assert_eq!(
             parse_rustc_version("rustc 1.96.1 (abc 2026-01-01)\n"),
@@ -480,6 +594,12 @@ mod tests {
         );
         assert_eq!(parse_node_version("22.17.0\n"), Some("22.17.0".to_string()));
         assert_eq!(parse_node_version("\n"), None);
+    }
+
+    #[test]
+    fn parses_bun_version_output() {
+        assert_eq!(parse_bun_version("1.2.18\n"), Some("1.2.18".to_string()));
+        assert_eq!(parse_bun_version("\n"), None);
     }
 
     #[test]
@@ -544,6 +664,31 @@ mod tests {
         .expect("version should render");
 
         assert_eq!(segment.text, "node 22.17.0");
+    }
+
+    #[test]
+    fn renders_bun_version_segment() {
+        let segment =
+            render_bun_version("1.2.18", &SegmentConfig::default()).expect("version should render");
+
+        assert_eq!(segment.id, "bun_version");
+        assert_eq!(segment.text, "🥟 1.2.18");
+        assert_eq!(segment.style.fg.as_deref(), Some("red"));
+        assert!(segment.style.bold);
+    }
+
+    #[test]
+    fn renders_bun_version_with_configured_icon() {
+        let segment = render_bun_version(
+            "1.2.18",
+            &SegmentConfig {
+                icon: Some("bun".to_string()),
+                ..SegmentConfig::default()
+            },
+        )
+        .expect("version should render");
+
+        assert_eq!(segment.text, "bun 1.2.18");
     }
 
     #[test]
@@ -619,6 +764,39 @@ mod tests {
             tempdir.path(),
             Instant::now() + Duration::from_millis(50),
             &node,
+        );
+
+        assert!(matches!(result, Err(RuntimeCollectError::TimedOut)));
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn collects_bun_version_with_timeout_bound_command() {
+        let tempdir = tempfile::tempdir().expect("tempdir should be created");
+        fs::write(tempdir.path().join("bun.lock"), "").expect("marker should be written");
+        let bun = write_script(tempdir.path(), "bun", "printf '1.2.18\\n'\n");
+
+        let collected = collect_bun_version_with_command(
+            tempdir.path(),
+            Instant::now() + Duration::from_secs(1),
+            &bun,
+        )
+        .expect("collector should succeed");
+
+        assert_eq!(collected, Some("1.2.18".to_string()));
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn times_out_slow_bun_version_commands() {
+        let tempdir = tempfile::tempdir().expect("tempdir should be created");
+        fs::write(tempdir.path().join("bun.lock"), "").expect("marker should be written");
+        let bun = write_script(tempdir.path(), "slow-bun", "sleep 2\n");
+
+        let result = collect_bun_version_with_command(
+            tempdir.path(),
+            Instant::now() + Duration::from_millis(50),
+            &bun,
         );
 
         assert!(matches!(result, Err(RuntimeCollectError::TimedOut)));
