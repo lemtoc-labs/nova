@@ -14,6 +14,7 @@ use crate::config::SegmentConfig;
 use crate::segments::{SegmentContent, Style};
 
 const GIT_BRANCH_SEGMENT_ID: &str = "git_branch";
+const GIT_BRANCH_ICON: &str = "";
 const GIT_STATUS_SEGMENT_ID: &str = "git_status";
 const GIT_STATUS_ARGS: &[&str] = &[
     "--no-optional-locks",
@@ -50,16 +51,25 @@ impl GitStatus {
 }
 
 pub fn render_git_branch(status: &GitStatus, config: &SegmentConfig) -> Option<SegmentContent> {
-    let text = status
+    let branch = status
         .branch
         .clone()
         .or_else(|| status.head_oid.as_deref().map(detached_head_label))?;
+    let text = git_branch_label(&branch, config);
 
     Some(SegmentContent::new(
         GIT_BRANCH_SEGMENT_ID,
         text,
         git_branch_style(config),
     ))
+}
+
+fn git_branch_label(branch: &str, config: &SegmentConfig) -> String {
+    match config.icon.as_deref() {
+        Some("") => branch.to_string(),
+        Some(icon) => format!("{icon} {branch}"),
+        None => format!("{GIT_BRANCH_ICON} {branch}"),
+    }
 }
 
 pub fn render_git_status(status: &GitStatus, config: &SegmentConfig) -> Option<SegmentContent> {
@@ -337,7 +347,7 @@ mod tests {
             render_git_branch(&status, &SegmentConfig::default()).expect("branch should render");
 
         assert_eq!(rendered.id, "git_branch");
-        assert_eq!(rendered.text, "main");
+        assert_eq!(rendered.text, " main");
         assert_eq!(rendered.style.fg.as_deref(), Some("magenta"));
         assert!(rendered.style.bold);
     }
@@ -352,7 +362,39 @@ mod tests {
         let rendered = render_git_branch(&status, &SegmentConfig::default())
             .expect("detached head should render");
 
-        assert_eq!(rendered.text, "HEAD abcdef0");
+        assert_eq!(rendered.text, " HEAD abcdef0");
+    }
+
+    #[test]
+    fn renders_branch_segment_with_configured_icon() {
+        let status = GitStatus {
+            branch: Some("main".to_string()),
+            ..GitStatus::default()
+        };
+        let config = SegmentConfig {
+            icon: Some("git".to_string()),
+            ..SegmentConfig::default()
+        };
+
+        let rendered = render_git_branch(&status, &config).expect("branch should render");
+
+        assert_eq!(rendered.text, "git main");
+    }
+
+    #[test]
+    fn renders_branch_segment_without_icon_when_configured_empty() {
+        let status = GitStatus {
+            branch: Some("main".to_string()),
+            ..GitStatus::default()
+        };
+        let config = SegmentConfig {
+            icon: Some(String::new()),
+            ..SegmentConfig::default()
+        };
+
+        let rendered = render_git_branch(&status, &config).expect("branch should render");
+
+        assert_eq!(rendered.text, "main");
     }
 
     #[test]

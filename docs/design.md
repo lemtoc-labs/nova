@@ -508,6 +508,9 @@ ttl_ms = 300000                 # per-segment override: [segments.<id>] ttl_ms
 max_components = 4
 style = { fg = "blue", bold = true }
 
+[segments.git_branch]
+icon = ""                     # set to "" to hide the icon
+
 [segments.git_status]
 ttl_ms = 0
 icons = { staged = "", conflicted = "", stash = "" }
