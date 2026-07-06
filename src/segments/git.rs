@@ -11,7 +11,7 @@ use wait_timeout::ChildExt;
 
 use crate::cache::CacheKey;
 use crate::config::SegmentConfig;
-use crate::segments::{SegmentContent, Style};
+use crate::segments::{SegmentContent, Style, label_with_icon};
 
 const GIT_BRANCH_SEGMENT_ID: &str = "git_branch";
 const GIT_BRANCH_ICON: &str = "";
@@ -55,21 +55,13 @@ pub fn render_git_branch(status: &GitStatus, config: &SegmentConfig) -> Option<S
         .branch
         .clone()
         .or_else(|| status.head_oid.as_deref().map(detached_head_label))?;
-    let text = git_branch_label(&branch, config);
+    let text = label_with_icon(&branch, config, GIT_BRANCH_ICON);
 
     Some(SegmentContent::new(
         GIT_BRANCH_SEGMENT_ID,
         text,
         git_branch_style(config),
     ))
-}
-
-fn git_branch_label(branch: &str, config: &SegmentConfig) -> String {
-    match config.icon.as_deref() {
-        Some("") => branch.to_string(),
-        Some(icon) => format!("{icon} {branch}"),
-        None => format!("{GIT_BRANCH_ICON} {branch}"),
-    }
 }
 
 pub fn render_git_status(status: &GitStatus, config: &SegmentConfig) -> Option<SegmentContent> {

@@ -11,7 +11,7 @@ use wait_timeout::ChildExt;
 
 use crate::cache::CacheKey;
 use crate::config::SegmentConfig;
-use crate::segments::{SegmentContent, Style};
+use crate::segments::{SegmentContent, Style, label_with_icon};
 
 const RUST_VERSION_SEGMENT_ID: &str = "rust_version";
 const RUST_VERSION_ICON: &str = "";
@@ -123,17 +123,9 @@ pub fn render_rust_version(version: &str, config: &SegmentConfig) -> Option<Segm
 
     Some(SegmentContent::new(
         RUST_VERSION_SEGMENT_ID,
-        rust_version_label(version, config),
+        label_with_icon(version, config, RUST_VERSION_ICON),
         rust_style(config),
     ))
-}
-
-fn rust_version_label(version: &str, config: &SegmentConfig) -> String {
-    match config.icon.as_deref() {
-        Some("") => version.to_string(),
-        Some(icon) => format!("{icon} {version}"),
-        None => format!("{RUST_VERSION_ICON} {version}"),
-    }
 }
 
 fn remaining_time(deadline: Instant) -> Result<Duration, RuntimeCollectError> {

@@ -50,6 +50,14 @@ impl From<&StyleConfig> for Style {
     }
 }
 
+pub fn label_with_icon(text: &str, config: &SegmentConfig, default_icon: &str) -> String {
+    match config.icon.as_deref() {
+        Some("") => text.to_string(),
+        Some(icon) => format!("{icon} {text}"),
+        None => format!("{default_icon} {text}"),
+    }
+}
+
 pub fn render_sync_segment(
     id: &str,
     state: &PromptState,
