@@ -26,9 +26,67 @@ environment.
 
 ## zsh Benchmarks
 
-End-to-end `zsh-bench` measurements are still pending. They should cover:
+Build the release binary first:
 
-- Interactive zsh startup overhead after `eval "$(nova init zsh)"`.
-- Time from `precmd` request to first prompt reply.
-- Time from first reply to async update.
-- Redraw count per prompt generation.
+```sh
+cargo build --release
+```
+
+Run the local Nova zsh benchmark:
+
+```sh
+scripts/bench-zsh
+```
+
+For a quick smoke check:
+
+```sh
+NOVA_ZSH_BENCH_ITERS=2 scripts/bench-zsh
+```
+
+The runner creates a temporary `HOME`/`ZDOTDIR`, writes a minimal `.zshenv`
+and `.zshrc`, and evaluates `nova init zsh` from `target/release/nova`. This
+keeps user shell configuration out of the measurement.
+
+The default benchmark uses:
+
+- `--login no`: measure an interactive non-login zsh.
+- `--git empty`: run inside an empty git repository.
+- `--standalone`: close the warm helper shell before measuring.
+- `--raw`: print all iteration values.
+
+Record the raw output with the machine model, date, git revision, terminal,
+and any non-default environment variables. The main fields to watch are
+`first_prompt_lag_ms`, `first_command_lag_ms`, `command_lag_ms`, and
+`input_lag_ms`.
+
+`exit_time_ms` is not used as a Nova performance target. `zsh-bench` reports it
+for completeness, but it is not a good proxy for interactive shell latency.
+
+### zsh-bench Thresholds
+
+Use the `zsh-bench` perception thresholds as the baseline for interpreting
+results:
+
+| metric | green | yellow limit | orange limit | red |
+| --- | ---: | ---: | ---: | ---: |
+| `first_prompt_lag_ms` | `<= 25ms` | `<= 50ms` | `<= 100ms` | `> 100ms` |
+| `first_command_lag_ms` | `<= 75ms` | `<= 150ms` | `<= 300ms` | `> 300ms` |
+| `command_lag_ms` | `<= 5ms` | `<= 10ms` | `<= 20ms` | `> 20ms` |
+| `input_lag_ms` | `<= 10ms` | `<= 20ms` | `<= 40ms` | `> 40ms` |
+
+Nova uses those thresholds in three tiers:
+
+- Acceptance: all four primary fields stay within yellow.
+- Target: `command_lag_ms` and `input_lag_ms` stay within green.
+- Stretch: all four primary fields stay within green.
+
+The target is stricter for `command_lag_ms` and `input_lag_ms` because Nova is
+a prompt component, not the user's whole shell configuration. It should leave
+latency budget for the user's terminal, plugins, completion, syntax
+highlighting, and autosuggestions.
+
+`first_prompt_lag_ms` and `first_command_lag_ms` may include shell startup and
+`nova init zsh` overhead, so yellow is acceptable initially. If either startup
+field remains near the yellow limit after M6 tuning, revisit initialization
+costs separately from the steady-state prompt path.

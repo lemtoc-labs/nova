@@ -1,0 +1,40 @@
+#!/usr/bin/env sh
+set -eu
+
+script_dir=$(unset CDPATH; cd "$(dirname "$0")" && pwd)
+repo_root=$(unset CDPATH; cd "$script_dir/.." && pwd)
+
+nova_bin=${NOVA_BENCH_BIN:-"$repo_root/target/release/nova"}
+zsh_bench=${NOVA_ZSH_BENCH:-zsh-bench}
+
+if [ ! -x "$nova_bin" ]; then
+  printf 'nova release binary not found: %s\n' "$nova_bin" >&2
+  printf 'run: cargo build --release\n' >&2
+  exit 1
+fi
+
+if ! command -v "$zsh_bench" >/dev/null 2>&1; then
+  printf 'zsh-bench not found in PATH\n' >&2
+  exit 1
+fi
+
+zdotdir=$(mktemp -d "${TMPDIR:-/tmp}/nova-zdotdir.XXXXXX")
+scratch_dir=$(mktemp -d "${TMPDIR:-/tmp}/nova-zsh-bench.XXXXXX")
+
+cleanup() {
+  rm -rf "$zdotdir" "$scratch_dir"
+}
+trap cleanup EXIT HUP INT TERM
+
+printf 'setopt no_global_rcs\n' > "$zdotdir/.zshenv"
+printf '%s\n' "eval \"\$(\"\$NOVA_BENCH_BIN\" init zsh)\"" > "$zdotdir/.zshrc"
+
+export HOME="$zdotdir"
+export ZDOTDIR="$zdotdir"
+export NOVA_BENCH_BIN="$nova_bin"
+
+if [ "$#" -eq 0 ]; then
+  set -- -i "${NOVA_ZSH_BENCH_ITERS:-16}" -l no -g empty -s -r
+fi
+
+exec "$zsh_bench" "$@" -d "$scratch_dir"
