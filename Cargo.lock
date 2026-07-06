@@ -221,6 +221,7 @@ dependencies = [
  "predicates",
  "proptest",
  "serde",
+ "tempfile",
  "thiserror",
  "toml",
  "unicode-width",
