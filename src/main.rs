@@ -4,6 +4,7 @@ use std::env;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
+use nova::config::error::ConfigWarning;
 use nova::config::load::load_config;
 use nova::render::render;
 use nova::state::{Keymap, PromptState};
@@ -71,7 +72,10 @@ fn run_prompt(args: &[String]) -> ExitCode {
 
 fn run_check(args: &[String]) -> ExitCode {
     match CheckArgs::parse(args).and_then(|args| args.check()) {
-        Ok(()) => {
+        Ok(warnings) => {
+            for warning in warnings {
+                eprintln!("nova: warning: {warning}");
+            }
             println!("nova: config ok");
             ExitCode::SUCCESS
         }
@@ -266,10 +270,9 @@ impl CheckArgs {
         Ok(parsed)
     }
 
-    fn check(self) -> Result<(), String> {
-        load_config(self.config_path.as_deref())
-            .map(|_config| ())
-            .map_err(|error| error.to_string())
+    fn check(self) -> Result<Vec<ConfigWarning>, String> {
+        let config = load_config(self.config_path.as_deref()).map_err(|error| error.to_string())?;
+        Ok(config.warnings())
     }
 }
 

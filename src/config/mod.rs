@@ -3,13 +3,24 @@
 pub mod error;
 pub mod load;
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::Path;
 
 use serde::Deserialize;
 
-use self::error::ConfigError;
+use self::error::{ConfigError, ConfigWarning};
+
+const KNOWN_SEGMENTS: &[&str] = &[
+    "dir",
+    "duration",
+    "exit_status",
+    "git_branch",
+    "git_status",
+    "prompt_char",
+    "rust_version",
+    "ssh",
+];
 
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Eq)]
 #[serde(default)]
@@ -86,12 +97,51 @@ impl Config {
         self.segments.get(id).cloned().unwrap_or_default()
     }
 
+    pub fn warnings(&self) -> Vec<ConfigWarning> {
+        let mut warnings = Vec::new();
+        let mut seen = BTreeSet::new();
+
+        for (location, segment) in self.layout_segments() {
+            if is_known_segment(segment) {
+                continue;
+            }
+
+            if seen.insert((location, segment)) {
+                warnings.push(ConfigWarning::UnknownLayoutSegment {
+                    location: location.to_string(),
+                    segment: segment.to_string(),
+                });
+            }
+        }
+
+        warnings
+    }
+
     fn validate(self) -> Result<Self, ConfigError> {
         match self.layout.lines {
             1 | 2 => Ok(self),
             lines => Err(ConfigError::InvalidLayoutLines { lines }),
         }
     }
+
+    fn layout_segments(&self) -> impl Iterator<Item = (&'static str, &str)> {
+        [
+            ("layout.line1.left", self.layout.line1.left.as_slice()),
+            ("layout.line1.right", self.layout.line1.right.as_slice()),
+            ("layout.line2.left", self.layout.line2.left.as_slice()),
+            ("layout.line2.right", self.layout.line2.right.as_slice()),
+        ]
+        .into_iter()
+        .flat_map(|(location, segments)| {
+            segments
+                .iter()
+                .map(move |segment| (location, segment.as_str()))
+        })
+    }
+}
+
+fn is_known_segment(segment: &str) -> bool {
+    KNOWN_SEGMENTS.contains(&segment)
 }
 
 impl Default for LayoutConfig {
@@ -185,5 +235,38 @@ mod tests {
             error,
             ConfigError::InvalidLayoutLines { lines: 3 }
         ));
+    }
+
+    #[test]
+    fn warns_about_unknown_layout_segments() {
+        let config = Config::from_toml(
+            r#"
+            [layout]
+            lines = 2
+
+            [layout.line1]
+            left = ["dir", "missing"]
+            right = ["missing"]
+
+            [layout.line2]
+            left = ["prompt_char"]
+            right = []
+            "#,
+        )
+        .expect("config should parse");
+
+        assert_eq!(
+            config.warnings(),
+            [
+                ConfigWarning::UnknownLayoutSegment {
+                    location: "layout.line1.left".to_string(),
+                    segment: "missing".to_string(),
+                },
+                ConfigWarning::UnknownLayoutSegment {
+                    location: "layout.line1.right".to_string(),
+                    segment: "missing".to_string(),
+                }
+            ]
+        );
     }
 }

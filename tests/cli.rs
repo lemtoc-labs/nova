@@ -138,3 +138,34 @@ fn validates_config_files() {
         .success()
         .stdout(predicate::str::contains("nova: config ok"));
 }
+
+#[test]
+fn warns_about_unknown_segments_while_validating_config_files() {
+    let tempdir = tempfile::tempdir().expect("tempdir should be created");
+    let config_path = tempdir.path().join("nova.toml");
+    fs::write(
+        &config_path,
+        r#"
+        [layout]
+        lines = 1
+
+        [layout.line1]
+        left = ["dir", "missing"]
+        right = []
+        "#,
+    )
+    .expect("config should be written");
+
+    let mut command = Command::cargo_bin("nova").expect("nova binary should build");
+
+    command
+        .arg("check")
+        .arg("--config")
+        .arg(config_path)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("nova: config ok"))
+        .stderr(predicate::str::contains(
+            "nova: warning: unknown segment `missing` in `layout.line1.left`",
+        ));
+}
