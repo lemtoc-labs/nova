@@ -21,6 +21,7 @@ fi
 zdotdir=$(mktemp -d "${TMPDIR:-/tmp}/nova-zdotdir.XXXXXX")
 scratch_dir=$(mktemp -d "${TMPDIR:-/tmp}/nova-zsh-bench.XXXXXX")
 
+# shellcheck disable=SC2329
 cleanup() {
   rm -rf "$zdotdir" "$scratch_dir"
 }
@@ -37,4 +38,6 @@ if [ "$#" -eq 0 ]; then
   set -- -i "${NOVA_ZSH_BENCH_ITERS:-16}" -l no -g empty -s -r
 fi
 
-exec "$zsh_bench" "$@" -d "$scratch_dir"
+status=0
+"$zsh_bench" "$@" -d "$scratch_dir" || status=$?
+exit "$status"
