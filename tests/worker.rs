@@ -333,6 +333,97 @@ exit 1
     assert_worker_exits(&mut child);
 }
 
+#[test]
+fn worker_omits_initial_git_failure_without_update() {
+    let tempdir = tempfile::tempdir().expect("tempdir should be created");
+    let runtime_dir = tempdir.path().join("runtime");
+    fs::create_dir(&runtime_dir).expect("runtime dir should be created");
+    create_fifo(runtime_dir.join("req"));
+    create_fifo(runtime_dir.join("resp"));
+
+    let repo = tempdir.path().join("repo");
+    fs::create_dir(&repo).expect("repo dir should be created");
+
+    let config_path = tempdir.path().join("nova.toml");
+    fs::write(
+        &config_path,
+        r#"
+        [layout]
+        lines = 2
+
+        [layout.line1]
+        left = ["dir", "git_branch", "git_status"]
+        right = []
+
+        [layout.line2]
+        left = ["prompt_char"]
+        right = []
+        "#,
+    )
+    .expect("config should be written");
+
+    let bin_dir = tempdir.path().join("bin");
+    fs::create_dir(&bin_dir).expect("bin dir should be created");
+    let count_path = tempdir.path().join("git-count");
+    write_script(
+        &bin_dir,
+        "git",
+        &format!(
+            r#"
+printf 1 > '{}'
+exit 1
+"#,
+            count_path.to_string_lossy()
+        ),
+    );
+
+    let path = format!(
+        "{}:{}",
+        bin_dir.to_string_lossy(),
+        env::var("PATH").unwrap_or_default()
+    );
+    let mut child = StdCommand::new(cargo_bin("nova"))
+        .arg("worker")
+        .arg("--dir")
+        .arg(&runtime_dir)
+        .arg("--session-token")
+        .arg("test-token")
+        .env("NOVA_CONFIG", &config_path)
+        .env("PATH", path)
+        .spawn()
+        .expect("worker should spawn");
+
+    let mut request = open_fifo_write(runtime_dir.join("req"));
+    let mut response = WorkerReader::new(open_fifo_read(runtime_dir.join("resp")));
+
+    assert_eq!(
+        read_worker_record(&mut response),
+        WorkerRecord::Handshake {
+            session_token: "test-token".to_string()
+        }
+    );
+
+    write_render_request(&mut request, 1, repo, 160);
+    let first_output = read_prompt_output(&mut response, 1);
+    assert!(
+        !first_output.prompt.contains("main"),
+        "initial failed git branch should be omitted: {}",
+        first_output.prompt
+    );
+    assert!(
+        !first_output.prompt.contains("[+"),
+        "initial failed git status should be omitted: {}",
+        first_output.prompt
+    );
+
+    wait_until(Duration::from_secs(2), || count_path.exists());
+    assert_no_worker_record(&mut response, Duration::from_millis(200));
+
+    drop(request);
+    drop(response);
+    assert_worker_exits(&mut child);
+}
+
 fn create_fifo(path: impl AsRef<Path>) {
     let status = StdCommand::new("mkfifo")
         .arg(path.as_ref())
@@ -457,6 +548,32 @@ fn read_worker_record(reader: &mut WorkerReader) -> WorkerRecord {
             Instant::now() < deadline,
             "timed out waiting for worker record"
         );
+        thread::sleep(Duration::from_millis(10));
+    }
+}
+
+fn assert_no_worker_record(reader: &mut WorkerReader, timeout: Duration) {
+    if let Some(record) = reader.pending.pop_front() {
+        panic!("unexpected worker record: {record:?}");
+    }
+
+    let deadline = Instant::now() + timeout;
+    let mut buffer = [0_u8; 1024];
+
+    while Instant::now() < deadline {
+        match reader.response.read(&mut buffer) {
+            Ok(0) => {}
+            Ok(bytes_read) => {
+                let chunk = String::from_utf8_lossy(&buffer[..bytes_read]);
+                if let Some(frame) = reader.decoder.push(&chunk).into_iter().next() {
+                    let record = decode_worker_record(&frame).expect("worker record should decode");
+                    panic!("unexpected worker record: {record:?}");
+                }
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {}
+            Err(error) => panic!("failed to read worker response: {error}"),
+        }
+
         thread::sleep(Duration::from_millis(10));
     }
 }

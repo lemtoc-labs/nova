@@ -208,8 +208,10 @@ Rules:
   side stores the last applied `gen` and discards any record with a smaller
   one; the worker drops queued work for superseded generations.
 - `partial` means async data is still loading or stale; `final` means every
-  active segment is fresh. zsh does not interpret this beyond debugging — the
-  worker already rendered loading/stale placeholders into the strings.
+  active segment is fresh. zsh does not interpret this beyond debugging. The
+  worker renders `Ready` and `Stale` values into the prompt and omits
+  `Loading`/`Failed` values so unavailable async data does not move the input
+  line.
 - On a version mismatch in the handshake (stale binary vs. new init script),
   zsh permanently falls back to the plain prompt for the session and warns
   once. A `session_token` mismatch (stale worker from a previous shell) is
@@ -378,12 +380,14 @@ is explicitly a non-goal**; simplicity and isolation win every tradeoff here.
   latency does not depend on it.
 - Every job gets a deadline (default `timeout_ms = 1000`, per-segment
   override). Child processes are waited on with `wait-timeout` and killed on
-  expiry; the segment reports `Failed` or keeps its stale value.
+  expiry; the cache records `Failed` when there is no previous value, or keeps
+  the previous success as `Stale`.
 - Supersession: jobs carry the generation that scheduled them. Completed
   results are always stored in the cache (still useful later), but an Update
   is pushed only if the _current_ prompt's composition changes.
 - Failures are isolated per segment: a panicking collector thread is caught
-  (`catch_unwind` around the job body) and rendered as `Failed`.
+  (`catch_unwind` around the job body) and recorded as `Failed` without
+  affecting other segments.
 
 Git collection (rail):
 
@@ -534,7 +538,7 @@ Test pyramid, from cheap to expensive:
    segment parsers — especially the porcelain-v2 parser with fixture inputs).
 2. **Snapshot tests** (`insta`) for the renderer: every layout combination
    (1-line, 2-line, with/without rprompt, first-line right), loading/stale/
-   failed placeholders, truncation steps, `%`-escaping. Snapshots review the
+   failed state behavior, truncation steps, `%`-escaping. Snapshots review the
    exact lowered `PROMPT`/`RPROMPT` strings.
 3. **Property tests** (`proptest`) for width/truncation invariants: rendered
    visible width never exceeds `cols`; no panics for arbitrary Unicode paths
