@@ -5,9 +5,9 @@ use std::path::PathBuf;
 use thiserror::Error;
 
 use crate::render::LoweredPrompt;
-use crate::state::{Keymap, PromptEnv, PromptState};
+use crate::state::{AwsEnv, Keymap, PromptEnv, PromptState};
 
-pub const VERSION: &str = "3";
+pub const VERSION: &str = "4";
 const FIELD_SEPARATOR: char = '\0';
 const RECORD_SEPARATOR: char = '\x1e';
 
@@ -116,6 +116,77 @@ pub fn encode_client_record(record: &ClientRecord) -> String {
                 .nix_shell_level
                 .clone()
                 .unwrap_or_default(),
+            request
+                .state
+                .env
+                .home
+                .as_ref()
+                .map(|home| home.to_string_lossy().into_owned())
+                .unwrap_or_default(),
+            request
+                .state
+                .env
+                .aws
+                .awsu_profile
+                .clone()
+                .unwrap_or_default(),
+            request.state.env.aws.aws_vault.clone().unwrap_or_default(),
+            request
+                .state
+                .env
+                .aws
+                .awsume_profile
+                .clone()
+                .unwrap_or_default(),
+            request
+                .state
+                .env
+                .aws
+                .aws_profile
+                .clone()
+                .unwrap_or_default(),
+            request
+                .state
+                .env
+                .aws
+                .aws_sso_profile
+                .clone()
+                .unwrap_or_default(),
+            request.state.env.aws.aws_region.clone().unwrap_or_default(),
+            request
+                .state
+                .env
+                .aws
+                .aws_default_region
+                .clone()
+                .unwrap_or_default(),
+            request
+                .state
+                .env
+                .aws
+                .aws_config_file
+                .as_ref()
+                .map(|path| path.to_string_lossy().into_owned())
+                .unwrap_or_default(),
+            request
+                .state
+                .env
+                .aws
+                .aws_shared_credentials_file
+                .as_ref()
+                .map(|path| path.to_string_lossy().into_owned())
+                .unwrap_or_default(),
+            request
+                .state
+                .env
+                .aws
+                .aws_credentials_file
+                .as_ref()
+                .map(|path| path.to_string_lossy().into_owned())
+                .unwrap_or_default(),
+            bool_field(request.state.env.aws.aws_access_key_id_present),
+            bool_field(request.state.env.aws.aws_secret_access_key_present),
+            bool_field(request.state.env.aws.aws_session_token_present),
         ]),
     }
 }
@@ -128,7 +199,7 @@ pub fn decode_client_record(record: &str) -> Result<ClientRecord, ProtocolError>
 
     match record_type.as_str() {
         "R" => {
-            expect_field_count(record_type, fields.len(), 11)?;
+            expect_field_count(record_type, fields.len(), 25)?;
             let generation = parse_u64("gen", &fields[1])?;
             let exit_status = parse_i32("exit_status", &fields[3])?;
             let duration_ms = if fields[4].is_empty() {
@@ -152,6 +223,22 @@ pub fn decode_client_record(record: &str) -> Result<ClientRecord, ProtocolError>
                         in_nix_shell: non_empty_string(&fields[8]),
                         nix_shell_name: non_empty_string(&fields[9]),
                         nix_shell_level: non_empty_string(&fields[10]),
+                        home: non_empty_path(&fields[11]),
+                        aws: AwsEnv {
+                            awsu_profile: non_empty_string(&fields[12]),
+                            aws_vault: non_empty_string(&fields[13]),
+                            awsume_profile: non_empty_string(&fields[14]),
+                            aws_profile: non_empty_string(&fields[15]),
+                            aws_sso_profile: non_empty_string(&fields[16]),
+                            aws_region: non_empty_string(&fields[17]),
+                            aws_default_region: non_empty_string(&fields[18]),
+                            aws_config_file: non_empty_path(&fields[19]),
+                            aws_shared_credentials_file: non_empty_path(&fields[20]),
+                            aws_credentials_file: non_empty_path(&fields[21]),
+                            aws_access_key_id_present: parse_bool_field(&fields[22]),
+                            aws_secret_access_key_present: parse_bool_field(&fields[23]),
+                            aws_session_token_present: parse_bool_field(&fields[24]),
+                        },
                     },
                 },
             }))
@@ -315,6 +402,18 @@ fn keymap_name(keymap: Keymap) -> &'static str {
     }
 }
 
+fn bool_field(value: bool) -> String {
+    if value {
+        "1".to_string()
+    } else {
+        String::new()
+    }
+}
+
+fn parse_bool_field(value: &str) -> bool {
+    !value.is_empty()
+}
+
 fn non_empty_path(value: &str) -> Option<PathBuf> {
     (!value.is_empty()).then(|| PathBuf::from(value))
 }
@@ -349,6 +448,22 @@ mod tests {
                     in_nix_shell: Some("pure".to_string()),
                     nix_shell_name: Some("nova".to_string()),
                     nix_shell_level: Some("1".to_string()),
+                    home: Some(PathBuf::from("/home/nova")),
+                    aws: AwsEnv {
+                        awsu_profile: Some("awsu".to_string()),
+                        aws_vault: Some("vault".to_string()),
+                        awsume_profile: Some("awsume".to_string()),
+                        aws_profile: Some("profile".to_string()),
+                        aws_sso_profile: Some("sso".to_string()),
+                        aws_region: Some("ap-northeast-1".to_string()),
+                        aws_default_region: Some("us-east-1".to_string()),
+                        aws_config_file: Some(PathBuf::from("/tmp/aws-config")),
+                        aws_shared_credentials_file: Some(PathBuf::from("/tmp/aws-credentials")),
+                        aws_credentials_file: Some(PathBuf::from("/tmp/aws-credentials-legacy")),
+                        aws_access_key_id_present: true,
+                        aws_secret_access_key_present: true,
+                        aws_session_token_present: true,
+                    },
                 },
             },
         });

@@ -1,5 +1,6 @@
 //! Runtime and tool information collectors.
 
+use std::collections::BTreeMap;
 use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -51,6 +52,8 @@ const PYTHON_DETECT_FILES: &[&str] = &[
 ];
 const NIX_SHELL_SEGMENT_ID: &str = "nix_shell";
 const NIX_SHELL_ICON: &str = "❄️";
+const AWS_SEGMENT_ID: &str = "aws";
+const AWS_ICON: &str = "";
 const NODE_VERSION_SEGMENT_ID: &str = "node_version";
 const NODE_VERSION_ICON: &str = "";
 const NODE_ARGS: &[&str] = &["--version"];
@@ -514,6 +517,233 @@ pub fn render_nix_shell(env: &PromptEnv, config: &SegmentConfig) -> Option<Segme
     ))
 }
 
+pub fn render_aws(env: &PromptEnv, config: &SegmentConfig) -> Option<SegmentContent> {
+    let context = resolve_aws_context(env)?;
+    Some(SegmentContent::new(
+        AWS_SEGMENT_ID,
+        label_with_icon(&context.label(), config, AWS_ICON),
+        aws_style(config),
+    ))
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct AwsContext {
+    profile: Option<String>,
+    region: Option<String>,
+}
+
+impl AwsContext {
+    fn label(&self) -> String {
+        match (self.profile.as_deref(), self.region.as_deref()) {
+            (Some(profile), Some(region)) => format!("{profile} ({region})"),
+            (Some(profile), None) => profile.to_string(),
+            (None, Some(region)) => format!("({region})"),
+            (None, None) => String::new(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+struct IniFile {
+    sections: BTreeMap<String, BTreeMap<String, String>>,
+}
+
+impl IniFile {
+    fn section(&self, name: &str) -> Option<&BTreeMap<String, String>> {
+        self.sections.get(name)
+    }
+}
+
+fn resolve_aws_context(env: &PromptEnv) -> Option<AwsContext> {
+    let config_file = aws_config_file_path(env).and_then(read_ini_file);
+    let credentials_file = aws_credentials_file_path(env).and_then(read_ini_file);
+    let profile = aws_profile(env);
+    let region = aws_region(env, profile.as_ref(), config_file.as_ref());
+
+    if profile.is_none() && region.is_none() {
+        return None;
+    }
+
+    if !has_credential_process_or_sso(
+        config_file.as_ref(),
+        credentials_file.as_ref(),
+        profile.as_ref(),
+    ) && !has_source_profile(
+        config_file.as_ref(),
+        credentials_file.as_ref(),
+        profile.as_ref(),
+    ) && !has_defined_credentials(env, credentials_file.as_ref(), profile.as_ref())
+    {
+        return None;
+    }
+
+    Some(AwsContext { profile, region })
+}
+
+fn aws_profile(env: &PromptEnv) -> Option<String> {
+    [
+        env.aws.awsu_profile.as_ref(),
+        env.aws.aws_vault.as_ref(),
+        env.aws.awsume_profile.as_ref(),
+        env.aws.aws_profile.as_ref(),
+        env.aws.aws_sso_profile.as_ref(),
+    ]
+    .into_iter()
+    .flatten()
+    .next()
+    .cloned()
+}
+
+fn aws_region(
+    env: &PromptEnv,
+    profile: Option<&String>,
+    config_file: Option<&IniFile>,
+) -> Option<String> {
+    env.aws
+        .aws_region
+        .clone()
+        .or_else(|| env.aws.aws_default_region.clone())
+        .or_else(|| {
+            aws_config_section(config_file, profile)?
+                .get("region")
+                .cloned()
+        })
+}
+
+fn has_credential_process_or_sso(
+    config_file: Option<&IniFile>,
+    credentials_file: Option<&IniFile>,
+    profile: Option<&String>,
+) -> bool {
+    let config_has = aws_config_section(config_file, profile).is_some_and(|section| {
+        section.contains_key("credential_process")
+            || section.contains_key("sso_session")
+            || section.contains_key("sso_start_url")
+    });
+    if config_has {
+        return true;
+    }
+
+    aws_credentials_section(credentials_file, profile).is_some_and(|section| {
+        section.contains_key("credential_process") || section.contains_key("sso_start_url")
+    })
+}
+
+fn has_source_profile(
+    config_file: Option<&IniFile>,
+    credentials_file: Option<&IniFile>,
+    profile: Option<&String>,
+) -> bool {
+    let Some(source_profile) =
+        aws_config_section(config_file, profile).and_then(|section| section.get("source_profile"))
+    else {
+        return false;
+    };
+
+    has_credential_process_or_sso(config_file, credentials_file, Some(source_profile))
+        || has_defined_credentials_for_profile(credentials_file, Some(source_profile))
+}
+
+fn has_defined_credentials(
+    env: &PromptEnv,
+    credentials_file: Option<&IniFile>,
+    profile: Option<&String>,
+) -> bool {
+    env.aws.aws_access_key_id_present
+        || env.aws.aws_secret_access_key_present
+        || env.aws.aws_session_token_present
+        || has_defined_credentials_for_profile(credentials_file, profile)
+}
+
+fn has_defined_credentials_for_profile(
+    credentials_file: Option<&IniFile>,
+    profile: Option<&String>,
+) -> bool {
+    aws_credentials_section(credentials_file, profile)
+        .is_some_and(|section| section.contains_key("aws_access_key_id"))
+}
+
+fn aws_config_section<'a>(
+    config_file: Option<&'a IniFile>,
+    profile: Option<&String>,
+) -> Option<&'a BTreeMap<String, String>> {
+    let section_name = match profile {
+        Some(profile) => format!("profile {profile}"),
+        None => "default".to_string(),
+    };
+    config_file?.section(&section_name)
+}
+
+fn aws_credentials_section<'a>(
+    credentials_file: Option<&'a IniFile>,
+    profile: Option<&String>,
+) -> Option<&'a BTreeMap<String, String>> {
+    let section_name = profile.map_or("default", String::as_str);
+    credentials_file?.section(section_name)
+}
+
+fn aws_config_file_path(env: &PromptEnv) -> Option<PathBuf> {
+    env.aws
+        .aws_config_file
+        .clone()
+        .or_else(|| env.home.as_ref().map(|home| home.join(".aws/config")))
+}
+
+fn aws_credentials_file_path(env: &PromptEnv) -> Option<PathBuf> {
+    env.aws
+        .aws_shared_credentials_file
+        .clone()
+        .or_else(|| env.aws.aws_credentials_file.clone())
+        .or_else(|| env.home.as_ref().map(|home| home.join(".aws/credentials")))
+}
+
+fn read_ini_file(path: PathBuf) -> Option<IniFile> {
+    fs::read_to_string(path)
+        .ok()
+        .map(|contents| parse_ini(&contents))
+}
+
+fn parse_ini(input: &str) -> IniFile {
+    let mut file = IniFile::default();
+    let mut current_section = None;
+
+    for raw_line in input.lines() {
+        let line = raw_line.trim();
+        if line.is_empty() || line.starts_with('#') || line.starts_with(';') {
+            continue;
+        }
+
+        if let Some(section) = line
+            .strip_prefix('[')
+            .and_then(|line| line.strip_suffix(']'))
+            .map(str::trim)
+            .filter(|section| !section.is_empty())
+        {
+            current_section = Some(section.to_string());
+            file.sections.entry(section.to_string()).or_default();
+            continue;
+        }
+
+        let Some(section) = current_section.as_ref() else {
+            continue;
+        };
+        let Some((key, value)) = line.split_once('=') else {
+            continue;
+        };
+        let key = key.trim();
+        if key.is_empty() {
+            continue;
+        }
+
+        file.sections
+            .entry(section.clone())
+            .or_default()
+            .insert(key.to_string(), value.trim().to_string());
+    }
+
+    file
+}
+
 #[derive(Clone, Copy)]
 struct RuntimeDetection<'a> {
     files: &'a [&'a str],
@@ -692,10 +922,24 @@ fn nix_shell_style(config: &SegmentConfig) -> Style {
     }
 }
 
+fn aws_style(config: &SegmentConfig) -> Style {
+    if config.style.fg.is_some() || config.style.bg.is_some() || config.style.bold {
+        Style::from(&config.style)
+    } else {
+        Style {
+            fg: Some("yellow".to_string()),
+            bg: None,
+            bold: true,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::fs;
     use std::time::Duration;
+
+    use crate::state::AwsEnv;
 
     use super::*;
 
@@ -1128,6 +1372,190 @@ mod tests {
             ),
             None
         );
+    }
+
+    #[test]
+    fn renders_aws_region_with_env_credentials() {
+        let segment = render_aws(
+            &PromptEnv {
+                aws: AwsEnv {
+                    aws_region: Some("ap-northeast-1".to_string()),
+                    aws_access_key_id_present: true,
+                    ..AwsEnv::default()
+                },
+                ..PromptEnv::default()
+            },
+            &SegmentConfig::default(),
+        )
+        .expect("aws segment should render");
+
+        assert_eq!(segment.id, "aws");
+        assert_eq!(segment.text, " (ap-northeast-1)");
+        assert_eq!(segment.style.fg.as_deref(), Some("yellow"));
+        assert!(segment.style.bold);
+    }
+
+    #[test]
+    fn omits_aws_without_credentials() {
+        assert_eq!(
+            render_aws(
+                &PromptEnv {
+                    aws: AwsEnv {
+                        aws_profile: Some("astronauts".to_string()),
+                        aws_region: Some("ap-northeast-1".to_string()),
+                        ..AwsEnv::default()
+                    },
+                    ..PromptEnv::default()
+                },
+                &SegmentConfig::default()
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn resolves_aws_profile_using_starship_env_precedence() {
+        let segment = render_aws(
+            &PromptEnv {
+                aws: AwsEnv {
+                    awsu_profile: Some("awsu-profile".to_string()),
+                    aws_vault: Some("vault-profile".to_string()),
+                    awsume_profile: Some("awsume-profile".to_string()),
+                    aws_profile: Some("plain-profile".to_string()),
+                    aws_sso_profile: Some("sso-profile".to_string()),
+                    aws_access_key_id_present: true,
+                    ..AwsEnv::default()
+                },
+                ..PromptEnv::default()
+            },
+            &SegmentConfig::default(),
+        )
+        .expect("aws segment should render");
+
+        assert_eq!(segment.text, " awsu-profile");
+    }
+
+    #[test]
+    fn reads_aws_profile_region_and_credential_process_from_config() {
+        let tempdir = tempfile::tempdir().expect("tempdir should be created");
+        let config_path = tempdir.path().join("config");
+        fs::write(
+            &config_path,
+            r#"
+            [default]
+            region = us-east-1
+
+            [profile astronauts]
+            region = ap-northeast-1
+            credential_process = /opt/bin/awscreds-retriever
+            "#,
+        )
+        .expect("config should be written");
+
+        let segment = render_aws(
+            &PromptEnv {
+                aws: AwsEnv {
+                    aws_profile: Some("astronauts".to_string()),
+                    aws_config_file: Some(config_path),
+                    ..AwsEnv::default()
+                },
+                ..PromptEnv::default()
+            },
+            &SegmentConfig::default(),
+        )
+        .expect("aws segment should render");
+
+        assert_eq!(segment.text, " astronauts (ap-northeast-1)");
+    }
+
+    #[test]
+    fn accepts_aws_sso_config() {
+        let tempdir = tempfile::tempdir().expect("tempdir should be created");
+        let config_path = tempdir.path().join("config");
+        fs::write(
+            &config_path,
+            r#"
+            [profile astronauts]
+            region = us-east-2
+            sso_start_url = https://example.com/start
+            "#,
+        )
+        .expect("config should be written");
+
+        let segment = render_aws(
+            &PromptEnv {
+                aws: AwsEnv {
+                    aws_profile: Some("astronauts".to_string()),
+                    aws_config_file: Some(config_path),
+                    ..AwsEnv::default()
+                },
+                ..PromptEnv::default()
+            },
+            &SegmentConfig::default(),
+        )
+        .expect("aws segment should render");
+
+        assert_eq!(segment.text, " astronauts (us-east-2)");
+    }
+
+    #[test]
+    fn reads_aws_default_region_and_default_credentials_from_files() {
+        let tempdir = tempfile::tempdir().expect("tempdir should be created");
+        let config_path = tempdir.path().join("config");
+        fs::write(&config_path, "[default]\nregion = us-east-1\n")
+            .expect("config should be written");
+        let credentials_path = tempdir.path().join("credentials");
+        fs::write(&credentials_path, "[default]\naws_access_key_id = dummy\n")
+            .expect("credentials should be written");
+
+        let segment = render_aws(
+            &PromptEnv {
+                aws: AwsEnv {
+                    aws_config_file: Some(config_path),
+                    aws_shared_credentials_file: Some(credentials_path),
+                    ..AwsEnv::default()
+                },
+                ..PromptEnv::default()
+            },
+            &SegmentConfig::default(),
+        )
+        .expect("aws segment should render");
+
+        assert_eq!(segment.text, " (us-east-1)");
+    }
+
+    #[test]
+    fn accepts_aws_source_profile_credentials() {
+        let tempdir = tempfile::tempdir().expect("tempdir should be created");
+        let config_path = tempdir.path().join("config");
+        fs::write(
+            &config_path,
+            r#"
+            [profile astronauts]
+            region = us-west-2
+            source_profile = base
+            "#,
+        )
+        .expect("config should be written");
+        let credentials_path = tempdir.path().join("credentials");
+        fs::write(&credentials_path, "[base]\naws_access_key_id = dummy\n")
+            .expect("credentials should be written");
+
+        let segment = render_aws(
+            &PromptEnv {
+                aws: AwsEnv {
+                    aws_profile: Some("astronauts".to_string()),
+                    aws_config_file: Some(config_path),
+                    aws_shared_credentials_file: Some(credentials_path),
+                    ..AwsEnv::default()
+                },
+                ..PromptEnv::default()
+            },
+            &SegmentConfig::default(),
+        )
+        .expect("aws segment should render");
+
+        assert_eq!(segment.text, " astronauts (us-west-2)");
     }
 
     #[test]

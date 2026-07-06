@@ -12,6 +12,7 @@ use serde::Deserialize;
 use self::error::{ConfigError, ConfigWarning};
 
 const KNOWN_SEGMENTS: &[&str] = &[
+    "aws",
     "dir",
     "duration",
     "deno_version",
@@ -164,6 +165,7 @@ impl Default for LayoutConfig {
                     "node_version".to_string(),
                     "python_version".to_string(),
                     "nix_shell".to_string(),
+                    "aws".to_string(),
                 ],
                 right: vec!["duration".to_string()],
             },
@@ -195,7 +197,8 @@ mod tests {
                 "deno_version",
                 "node_version",
                 "python_version",
-                "nix_shell"
+                "nix_shell",
+                "aws"
             ]
         );
         assert_eq!(config.layout.line1.right, ["duration"]);

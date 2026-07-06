@@ -67,6 +67,7 @@ pub fn render_sync_segment(
         "dir" => dir::DirSegment.render(state, config),
         "duration" => duration::DurationSegment.render(state, config),
         "exit_status" => exit_status::ExitStatusSegment.render(state, config),
+        "aws" => runtime::render_aws(&state.env, config),
         "nix_shell" => runtime::render_nix_shell(&state.env, config),
         "prompt_char" => prompt_char::PromptCharSegment.render(state, config),
         "ssh" => ssh::SshSegment.render(state, config),
