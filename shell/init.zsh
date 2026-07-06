@@ -1,15 +1,202 @@
 # shellcheck shell=zsh
 
-if [[ -n ${_NOVA_BOOTSTRAP_ZSH_LOADED:-} ]]; then
+if [[ -n ${_NOVA_ZSH_LOADED:-} ]]; then
   return
 fi
-typeset -g _NOVA_BOOTSTRAP_ZSH_LOADED=1
+typeset -g _NOVA_ZSH_LOADED=1
 
-zmodload zsh/datetime 2>/dev/null || true
+zmodload zsh/datetime zsh/system zsh/zselect 2>/dev/null || true
 autoload -Uz add-zsh-hook
 
 typeset -g _nova_bin=@NOVA_BIN@
 typeset -g _nova_cmd_start=
+typeset -g _nova_runtime_dir="${XDG_RUNTIME_DIR:-${TMPDIR:-/tmp}}/nova-$$"
+typeset -g _nova_req_fifo="$_nova_runtime_dir/req"
+typeset -g _nova_resp_fifo="$_nova_runtime_dir/resp"
+typeset -g _nova_session_token="${RANDOM}${RANDOM}${RANDOM}${RANDOM}-$$"
+typeset -g _nova_req_fd=
+typeset -g _nova_resp_fd=
+typeset -g _nova_worker_pid=
+typeset -g _nova_resp_buffer=
+typeset -g _nova_gen=0
+typeset -g _nova_last_applied_gen=0
+typeset -g _nova_reply_applied=0
+typeset -g _nova_handshake_ok=0
+typeset -g _nova_failures=0
+typeset -g _nova_warned_dead=0
+typeset -g _nova_nul=$'\0'
+typeset -g _nova_rs=$'\x1e'
+
+_nova_setup_runtime() {
+  emulate -L zsh
+  command rm -rf -- "$_nova_runtime_dir" 2>/dev/null || true
+  command mkdir -p -- "$_nova_runtime_dir" || return 1
+  command mkfifo -- "$_nova_req_fifo" "$_nova_resp_fifo" || return 1
+}
+
+_nova_spawn_worker() {
+  emulate -L zsh
+  unsetopt bg_nice 2>/dev/null || true
+  [[ -p "$_nova_req_fifo" && -p "$_nova_resp_fifo" ]] || _nova_setup_runtime || return 1
+  "$_nova_bin" worker --dir "$_nova_runtime_dir" --session-token "$_nova_session_token" \
+    </dev/null >/dev/null 2>/dev/null &!
+  _nova_worker_pid=$!
+}
+
+_nova_close_fds() {
+  emulate -L zsh
+  if [[ -n ${_nova_resp_fd:-} ]]; then
+    if [[ -o interactive ]]; then
+      zle -F "$_nova_resp_fd" 2>/dev/null || true
+    fi
+    exec {_nova_resp_fd}<&- 2>/dev/null || true
+  fi
+  if [[ -n ${_nova_req_fd:-} ]]; then
+    exec {_nova_req_fd}>&- 2>/dev/null || true
+  fi
+  _nova_req_fd=
+  _nova_resp_fd=
+  _nova_resp_buffer=
+  _nova_handshake_ok=0
+}
+
+_nova_mark_dead() {
+  emulate -L zsh
+  _nova_close_fds
+  (( _nova_failures++ ))
+}
+
+_nova_open_transport() {
+  emulate -L zsh
+  [[ -n ${_nova_req_fd:-} && -n ${_nova_resp_fd:-} ]] && return 0
+
+  sysopen -o nonblock -o cloexec -w -u _nova_req_fd -- "$_nova_req_fifo" 2>/dev/null
+  if [[ $? -ne 0 ]]; then
+    zselect -t 1 2>/dev/null || true
+    sysopen -o nonblock -o cloexec -w -u _nova_req_fd -- "$_nova_req_fifo" 2>/dev/null || return 1
+  fi
+
+  sysopen -o nonblock -o cloexec -r -u _nova_resp_fd -- "$_nova_resp_fifo" 2>/dev/null || {
+    _nova_close_fds
+    return 1
+  }
+
+  if [[ -o interactive ]]; then
+    zle -F "$_nova_resp_fd" _nova_on_update 2>/dev/null || true
+  fi
+
+  zselect -t 5 -r "$_nova_resp_fd" >/dev/null 2>&1 || {
+    _nova_close_fds
+    return 1
+  }
+
+  _nova_drain || return 1
+  (( _nova_handshake_ok )) || {
+    _nova_close_fds
+    return 1
+  }
+}
+
+_nova_ensure_worker() {
+  emulate -L zsh
+  (( _nova_failures >= 3 )) && return 1
+
+  if [[ -n ${_nova_req_fd:-} && -n ${_nova_resp_fd:-} ]]; then
+    return 0
+  fi
+
+  _nova_spawn_worker || {
+    _nova_mark_dead
+    return 1
+  }
+
+  _nova_open_transport || {
+    _nova_mark_dead
+    return 1
+  }
+}
+
+_nova_send_request() {
+  emulate -L zsh
+  local exit_status=$1
+  local duration_ms=$2
+  local -i columns=${COLUMNS:-80}
+  if (( columns <= 0 )); then
+    columns=80
+  fi
+
+  local frame="R${_nova_nul}${_nova_gen}${_nova_nul}${PWD}${_nova_nul}${exit_status}${_nova_nul}${duration_ms}${_nova_nul}${columns}${_nova_nul}${KEYMAP:-main}${_nova_rs}"
+  syswrite -o "$_nova_req_fd" -- "$frame" >/dev/null 2>&1
+}
+
+_nova_drain() {
+  emulate -L zsh
+  local chunk
+
+  while zselect -t 0 -r "$_nova_resp_fd" >/dev/null 2>&1; do
+    chunk=
+    sysread -i "$_nova_resp_fd" -s 4096 chunk 2>/dev/null || return 1
+    [[ -n "$chunk" ]] || return 1
+    _nova_resp_buffer+="$chunk"
+  done
+
+  _nova_process_buffer
+}
+
+_nova_process_buffer() {
+  emulate -L zsh
+  local record
+  while [[ "$_nova_resp_buffer" == *"$_nova_rs"* ]]; do
+    record="${_nova_resp_buffer%%$_nova_rs*}"
+    _nova_resp_buffer="${_nova_resp_buffer#*$_nova_rs}"
+    _nova_apply_record "$record"
+  done
+}
+
+_nova_apply_record() {
+  emulate -L zsh
+  local record=$1
+  local -a fields
+  fields=("${(0)record}")
+
+  case "${fields[1]}" in
+    H)
+      if [[ "${fields[2]}" == 1 && "${fields[3]}" == "$_nova_session_token" ]]; then
+        _nova_handshake_ok=1
+      fi
+      ;;
+    P|U)
+      local -i gen=${fields[2]:-0}
+      (( gen < _nova_last_applied_gen )) && return
+      _nova_last_applied_gen=$gen
+      PROMPT="${fields[4]}"
+      RPROMPT="${fields[5]}"
+      _nova_reply_applied=1
+      ;;
+  esac
+}
+
+_nova_fallback() {
+  emulate -L zsh
+  PROMPT='%~ %# '
+  RPROMPT=''
+  if (( _nova_failures >= 3 && ! _nova_warned_dead )); then
+    print -ru2 -- 'nova: worker unavailable; using fallback prompt for this session'
+    _nova_warned_dead=1
+  fi
+}
+
+_nova_on_update() {
+  emulate -L zsh
+  _nova_reply_applied=0
+  _nova_drain || {
+    _nova_mark_dead
+    return 1
+  }
+  if (( _nova_reply_applied )) && zle; then
+    zle reset-prompt
+  fi
+}
 
 _nova_preexec() {
   emulate -L zsh
@@ -20,32 +207,38 @@ _nova_precmd() {
   local exit_status=$?
   emulate -L zsh
 
-  local -a args
-  local -i columns=${COLUMNS:-80}
-  if (( columns <= 0 )); then
-    columns=80
-  fi
-
-  args=(
-    prompt
-    --format shell
-    --cwd "$PWD"
-    --cols "$columns"
-    --exit "$exit_status"
-    --keymap "${KEYMAP:-main}"
-  )
-
+  local duration_ms=
   if [[ -n ${_nova_cmd_start:-} && -n ${EPOCHREALTIME:-} ]]; then
-    local -i duration_ms
-    duration_ms=$(( (EPOCHREALTIME - _nova_cmd_start) * 1000 ))
-    args+=(--duration-ms "$duration_ms")
+    local -i elapsed_ms
+    elapsed_ms=$(( (EPOCHREALTIME - _nova_cmd_start) * 1000 ))
+    duration_ms=$elapsed_ms
   fi
 
-  local rendered
-  rendered="$("$_nova_bin" "${args[@]}" 2>/dev/null)"
-  if [[ $? -eq 0 && -n "$rendered" ]]; then
-    eval "$rendered"
-  else
+  _nova_ensure_worker || {
+    _nova_fallback
+    _nova_cmd_start=
+    return
+  }
+
+  (( _nova_gen++ ))
+  _nova_reply_applied=0
+  _nova_send_request "$exit_status" "$duration_ms" || {
+    _nova_mark_dead
+    _nova_fallback
+    _nova_cmd_start=
+    return
+  }
+
+  if zselect -t 5 -r "$_nova_resp_fd" >/dev/null 2>&1; then
+    _nova_drain || {
+      _nova_mark_dead
+      _nova_fallback
+      _nova_cmd_start=
+      return
+    }
+  fi
+
+  if (( ! _nova_reply_applied )); then
     PROMPT='%~ %# '
     RPROMPT=''
   fi
@@ -53,5 +246,12 @@ _nova_precmd() {
   _nova_cmd_start=
 }
 
+_nova_cleanup() {
+  emulate -L zsh
+  _nova_close_fds
+  command rm -rf -- "$_nova_runtime_dir" 2>/dev/null || true
+}
+
 add-zsh-hook preexec _nova_preexec
 add-zsh-hook precmd _nova_precmd
+add-zsh-hook zshexit _nova_cleanup

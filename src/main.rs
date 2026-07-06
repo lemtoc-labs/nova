@@ -7,6 +7,7 @@ use std::process::ExitCode;
 use nova::config::load::load_config;
 use nova::render::render;
 use nova::state::{Keymap, PromptState};
+use nova::worker::{WorkerOptions, run as run_worker_loop};
 use nova::zsh_init::render_init_script;
 
 fn main() -> ExitCode {
@@ -15,7 +16,7 @@ fn main() -> ExitCode {
         Some("init") => run_init(&args[1..]),
         Some("prompt") => run_prompt(&args[1..]),
         Some("check") => run_check(&args[1..]),
-        Some("worker") => not_implemented(),
+        Some("worker") => run_worker(&args[1..]),
         Some("--help") | Some("-h") | None => {
             print_help();
             ExitCode::SUCCESS
@@ -79,11 +80,6 @@ fn run_check(args: &[String]) -> ExitCode {
             ExitCode::FAILURE
         }
     }
-}
-
-fn not_implemented() -> ExitCode {
-    eprintln!("nova: command is not implemented yet");
-    ExitCode::FAILURE
 }
 
 fn print_help() {
@@ -190,6 +186,59 @@ impl PromptArgs {
                 zsh_quote(&output.rprompt)
             ),
         })
+    }
+}
+
+#[derive(Clone, Debug)]
+struct WorkerArgs {
+    runtime_dir: PathBuf,
+    session_token: String,
+}
+
+impl WorkerArgs {
+    fn parse(args: &[String]) -> Result<Self, String> {
+        let mut runtime_dir = None;
+        let mut session_token = None;
+        let mut index = 0;
+
+        while index < args.len() {
+            match args[index].as_str() {
+                "--dir" => {
+                    runtime_dir = Some(PathBuf::from(required_value(args, index, "--dir")?));
+                    index += 2;
+                }
+                "--session-token" => {
+                    session_token =
+                        Some(required_value(args, index, "--session-token")?.to_string());
+                    index += 2;
+                }
+                option => return Err(format!("unknown worker option `{option}`")),
+            }
+        }
+
+        Ok(Self {
+            runtime_dir: runtime_dir.ok_or_else(|| "worker requires --dir".to_string())?,
+            session_token: session_token
+                .ok_or_else(|| "worker requires --session-token".to_string())?,
+        })
+    }
+
+    fn run(self) -> Result<(), String> {
+        run_worker_loop(WorkerOptions {
+            runtime_dir: self.runtime_dir,
+            session_token: self.session_token,
+        })
+        .map_err(|error| error.to_string())
+    }
+}
+
+fn run_worker(args: &[String]) -> ExitCode {
+    match WorkerArgs::parse(args).and_then(WorkerArgs::run) {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(error) => {
+            eprintln!("nova: {error}");
+            ExitCode::FAILURE
+        }
     }
 }
 
