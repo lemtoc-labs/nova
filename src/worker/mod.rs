@@ -27,7 +27,6 @@ use protocol::{
 };
 
 const CACHE_CAPACITY: usize = 128;
-const CONFIG_GENERATION: u64 = 0;
 const EVENT_POLL_INTERVAL: Duration = Duration::from_millis(10);
 const GIT_REFRESH_TTL: Duration = Duration::ZERO;
 const GIT_TIMEOUT: Duration = Duration::from_secs(1);
@@ -93,6 +92,7 @@ pub fn run(options: WorkerOptions) -> Result<(), WorkerError> {
     let (job_results, job_result_receiver) = mpsc::channel::<JobResult<AsyncJobSegments>>();
     let job_pool = JobPool::new(MAX_CONCURRENCY, job_results);
     let mut active_prompt = None;
+    let mut config_state = ConfigState::default();
     let mut warned_config_error = false;
 
     loop {
@@ -111,8 +111,15 @@ pub fn run(options: WorkerOptions) -> Result<(), WorkerError> {
                     let Ok(ClientRecord::Render(request)) = decode_client_record(&frame) else {
                         continue;
                     };
-                    let config = load_worker_config(&mut warned_config_error);
-                    let async_values = async_values(&cache, &request.state.cwd, &config);
+                    let worker_config =
+                        load_worker_config(&mut config_state, &mut warned_config_error);
+                    let config = worker_config.config;
+                    let async_values = async_values(
+                        &cache,
+                        &request.state.cwd,
+                        &config,
+                        worker_config.generation,
+                    );
                     let output = render_with_async(&config, &request.state, &async_values);
                     let status = render_status(&config, &async_values);
                     write_record(
@@ -128,6 +135,7 @@ pub fn run(options: WorkerOptions) -> Result<(), WorkerError> {
                         generation: request.generation,
                         state: request.state.clone(),
                         config: config.clone(),
+                        config_generation: worker_config.generation,
                         output,
                     });
                     schedule_async_refreshes(
@@ -136,6 +144,7 @@ pub fn run(options: WorkerOptions) -> Result<(), WorkerError> {
                         request.generation,
                         request.state.cwd,
                         &config,
+                        worker_config.generation,
                     );
                 }
             }
@@ -158,7 +167,20 @@ struct ActivePrompt {
     generation: u64,
     state: PromptState,
     config: Config,
+    config_generation: u64,
     output: LoweredPrompt,
+}
+
+#[derive(Clone, Debug, Default)]
+struct ConfigState {
+    config: Config,
+    generation: u64,
+}
+
+#[derive(Clone, Debug)]
+struct WorkerConfig {
+    config: Config,
+    generation: u64,
 }
 
 #[derive(Debug)]
@@ -240,7 +262,12 @@ fn write_update_if_active(
         return Ok(());
     }
 
-    let async_values = async_values(cache, &active_prompt.state.cwd, &active_prompt.config);
+    let async_values = async_values(
+        cache,
+        &active_prompt.state.cwd,
+        &active_prompt.config,
+        active_prompt.config_generation,
+    );
     let output = render_with_async(&active_prompt.config, &active_prompt.state, &async_values);
     if output == active_prompt.output {
         return Ok(());
@@ -272,27 +299,41 @@ fn complete_segment(
     }
 }
 
-fn load_worker_config(warned_config_error: &mut bool) -> Config {
-    load_config(None).unwrap_or_else(|error| {
+fn load_worker_config(
+    config_state: &mut ConfigState,
+    warned_config_error: &mut bool,
+) -> WorkerConfig {
+    let config = load_config(None).unwrap_or_else(|error| {
         if !*warned_config_error {
             eprintln!("nova: {error}; using built-in defaults");
             *warned_config_error = true;
         }
         Config::default()
-    })
+    });
+
+    if config != config_state.config {
+        config_state.generation = config_state.generation.saturating_add(1);
+        config_state.config = config;
+    }
+
+    WorkerConfig {
+        config: config_state.config.clone(),
+        generation: config_state.generation,
+    }
 }
 
 fn async_values(
     cache: &SegmentCache,
     cwd: &std::path::Path,
     config: &Config,
+    config_generation: u64,
 ) -> AsyncSegmentValues {
     let now = Instant::now();
     let mut values = AsyncSegmentValues::new();
 
     if config_uses_any_segment(config, &["git_branch", "git_status"]) {
         let ttl = segment_ttl(&config.segment("git_status"), GIT_REFRESH_TTL);
-        let status_key = git_status_key(cwd);
+        let status_key = git_status_key(cwd, config_generation);
         let branch_key = git_branch_key_from_status_key(&status_key);
         values.insert(
             "git_branch".to_string(),
@@ -306,7 +347,7 @@ fn async_values(
 
     if config_uses_segment(config, "rust_version") {
         let ttl = segment_ttl(&config.segment("rust_version"), RUNTIME_REFRESH_TTL);
-        let key = rust_version_key(cwd);
+        let key = rust_version_key(cwd, config_generation);
         values.insert("rust_version".to_string(), cache.lookup(&key, now, ttl));
     }
 
@@ -319,9 +360,17 @@ fn schedule_async_refreshes(
     generation: u64,
     cwd: PathBuf,
     config: &Config,
+    config_generation: u64,
 ) {
-    schedule_git_refresh(pool, cache, generation, cwd.clone(), config);
-    schedule_rust_refresh(pool, cache, generation, cwd, config);
+    schedule_git_refresh(
+        pool,
+        cache,
+        generation,
+        cwd.clone(),
+        config,
+        config_generation,
+    );
+    schedule_rust_refresh(pool, cache, generation, cwd, config, config_generation);
 }
 
 fn schedule_git_refresh(
@@ -330,12 +379,13 @@ fn schedule_git_refresh(
     generation: u64,
     cwd: PathBuf,
     config: &Config,
+    config_generation: u64,
 ) {
     if !config_uses_any_segment(config, &["git_branch", "git_status"]) {
         return;
     }
 
-    let status_key = git_status_key(&cwd);
+    let status_key = git_status_key(&cwd, config_generation);
     let status_config = config.segment("git_status");
     let ttl = segment_ttl(&status_config, GIT_REFRESH_TTL);
     if !cache.needs_refresh(&status_key, Instant::now(), ttl) {
@@ -389,12 +439,13 @@ fn schedule_rust_refresh(
     generation: u64,
     cwd: PathBuf,
     config: &Config,
+    config_generation: u64,
 ) {
     if !config_uses_segment(config, "rust_version") {
         return;
     }
 
-    let key = rust_version_key(&cwd);
+    let key = rust_version_key(&cwd, config_generation);
     let rust_config = config.segment("rust_version");
     let ttl = segment_ttl(&rust_config, RUNTIME_REFRESH_TTL);
     if !cache.needs_refresh(&key, Instant::now(), ttl) {
@@ -422,12 +473,12 @@ fn schedule_rust_refresh(
     }
 }
 
-fn git_status_key(cwd: &std::path::Path) -> CacheKey {
-    CacheKey::new("git_status", cwd.to_string_lossy(), CONFIG_GENERATION)
+fn git_status_key(cwd: &std::path::Path, config_generation: u64) -> CacheKey {
+    CacheKey::new("git_status", cwd.to_string_lossy(), config_generation)
 }
 
-fn rust_version_key(cwd: &std::path::Path) -> CacheKey {
-    CacheKey::new("rust_version", cwd.to_string_lossy(), CONFIG_GENERATION)
+fn rust_version_key(cwd: &std::path::Path, config_generation: u64) -> CacheKey {
+    CacheKey::new("rust_version", cwd.to_string_lossy(), config_generation)
 }
 
 fn git_branch_key_from_status_key(status_key: &CacheKey) -> CacheKey {

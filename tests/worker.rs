@@ -208,6 +208,119 @@ fn worker_sends_update_when_rust_version_finishes() {
 }
 
 #[test]
+fn worker_invalidates_async_cache_when_config_changes() {
+    let tempdir = tempfile::tempdir().expect("tempdir should be created");
+    let runtime_dir = tempdir.path().join("runtime");
+    fs::create_dir(&runtime_dir).expect("runtime dir should be created");
+    create_fifo(runtime_dir.join("req"));
+    create_fifo(runtime_dir.join("resp"));
+
+    let project = tempdir.path().join("project");
+    fs::create_dir(&project).expect("project dir should be created");
+    fs::write(project.join("Cargo.toml"), "[package]\nname = \"demo\"\n")
+        .expect("Cargo.toml should be written");
+
+    let config_path = tempdir.path().join("nova.toml");
+    fs::write(
+        &config_path,
+        r#"
+        [layout]
+        lines = 2
+
+        [layout.line1]
+        left = ["dir", "rust_version"]
+        right = []
+
+        [layout.line2]
+        left = ["prompt_char"]
+        right = []
+
+        [segments.rust_version]
+        icon = "rust"
+        "#,
+    )
+    .expect("config should be written");
+
+    let bin_dir = tempdir.path().join("bin");
+    fs::create_dir(&bin_dir).expect("bin dir should be created");
+    write_script(&bin_dir, "rustc", "printf 'rustc 1.96.1 (abc date)\\n'\n");
+
+    let path = format!(
+        "{}:{}",
+        bin_dir.to_string_lossy(),
+        env::var("PATH").unwrap_or_default()
+    );
+    let mut child = StdCommand::new(cargo_bin("nova"))
+        .arg("worker")
+        .arg("--dir")
+        .arg(&runtime_dir)
+        .arg("--session-token")
+        .arg("test-token")
+        .env("NOVA_CONFIG", &config_path)
+        .env("PATH", path)
+        .spawn()
+        .expect("worker should spawn");
+
+    let mut request = open_fifo_write(runtime_dir.join("req"));
+    let mut response = WorkerReader::new(open_fifo_read(runtime_dir.join("resp")));
+
+    assert_eq!(
+        read_worker_record(&mut response),
+        WorkerRecord::Handshake {
+            session_token: "test-token".to_string()
+        }
+    );
+
+    write_render_request(&mut request, 1, project.clone(), 160);
+    let (first_status, first_output) = read_prompt_response(&mut response, 1);
+    assert_eq!(first_status, RenderStatus::Partial);
+    assert!(!first_output.prompt.contains("1.96.1"));
+
+    let (first_update_status, first_update) = read_update_response(&mut response, 1);
+    assert_eq!(first_update_status, RenderStatus::Final);
+    assert!(first_update.prompt.contains("rust 1.96.1"));
+
+    fs::write(
+        &config_path,
+        r#"
+        [layout]
+        lines = 2
+
+        [layout.line1]
+        left = ["dir", "rust_version"]
+        right = []
+
+        [layout.line2]
+        left = ["prompt_char"]
+        right = []
+
+        [segments.rust_version]
+        icon = ""
+        "#,
+    )
+    .expect("config should be rewritten");
+
+    write_render_request(&mut request, 2, project, 160);
+    let (second_status, second_output) = read_prompt_response(&mut response, 2);
+    assert_eq!(second_status, RenderStatus::Partial);
+    assert!(
+        !second_output.prompt.contains("1.96.1"),
+        "config change should not reuse stale runtime cache: {}",
+        second_output.prompt
+    );
+
+    let (second_update_status, second_update) = read_update_response(&mut response, 2);
+    assert_eq!(second_update_status, RenderStatus::Final);
+    assert!(second_update.prompt.contains("1.96.1"));
+    assert!(!second_update.prompt.contains("rust 1.96.1"));
+    assert!(!second_update.prompt.contains(" 1.96.1"));
+
+    drop(request);
+    drop(response);
+    assert_worker_exits(&mut child);
+}
+
+#[test]
 fn worker_keeps_stale_git_status_after_refresh_failure() {
     let tempdir = tempfile::tempdir().expect("tempdir should be created");
     let runtime_dir = tempdir.path().join("runtime");
