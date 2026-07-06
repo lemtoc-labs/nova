@@ -19,6 +19,7 @@ const KNOWN_SEGMENTS: &[&str] = &[
     "bun_version",
     "git_branch",
     "git_status",
+    "nix_shell",
     "node_version",
     "prompt_char",
     "python_version",
@@ -162,6 +163,7 @@ impl Default for LayoutConfig {
                     "deno_version".to_string(),
                     "node_version".to_string(),
                     "python_version".to_string(),
+                    "nix_shell".to_string(),
                 ],
                 right: vec!["duration".to_string()],
             },
@@ -192,7 +194,8 @@ mod tests {
                 "bun_version",
                 "deno_version",
                 "node_version",
-                "python_version"
+                "python_version",
+                "nix_shell"
             ]
         );
         assert_eq!(config.layout.line1.right, ["duration"]);

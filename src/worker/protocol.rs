@@ -7,7 +7,7 @@ use thiserror::Error;
 use crate::render::LoweredPrompt;
 use crate::state::{Keymap, PromptEnv, PromptState};
 
-pub const VERSION: &str = "2";
+pub const VERSION: &str = "3";
 const FIELD_SEPARATOR: char = '\0';
 const RECORD_SEPARATOR: char = '\x1e';
 
@@ -108,6 +108,14 @@ pub fn encode_client_record(record: &ClientRecord) -> String {
                 .as_ref()
                 .map(|virtual_env| virtual_env.to_string_lossy().into_owned())
                 .unwrap_or_default(),
+            request.state.env.in_nix_shell.clone().unwrap_or_default(),
+            request.state.env.nix_shell_name.clone().unwrap_or_default(),
+            request
+                .state
+                .env
+                .nix_shell_level
+                .clone()
+                .unwrap_or_default(),
         ]),
     }
 }
@@ -120,7 +128,7 @@ pub fn decode_client_record(record: &str) -> Result<ClientRecord, ProtocolError>
 
     match record_type.as_str() {
         "R" => {
-            expect_field_count(record_type, fields.len(), 8)?;
+            expect_field_count(record_type, fields.len(), 11)?;
             let generation = parse_u64("gen", &fields[1])?;
             let exit_status = parse_i32("exit_status", &fields[3])?;
             let duration_ms = if fields[4].is_empty() {
@@ -141,6 +149,9 @@ pub fn decode_client_record(record: &str) -> Result<ClientRecord, ProtocolError>
                     keymap,
                     env: PromptEnv {
                         virtual_env: non_empty_path(&fields[7]),
+                        in_nix_shell: non_empty_string(&fields[8]),
+                        nix_shell_name: non_empty_string(&fields[9]),
+                        nix_shell_level: non_empty_string(&fields[10]),
                     },
                 },
             }))
@@ -308,6 +319,10 @@ fn non_empty_path(value: &str) -> Option<PathBuf> {
     (!value.is_empty()).then(|| PathBuf::from(value))
 }
 
+fn non_empty_string(value: &str) -> Option<String> {
+    (!value.is_empty()).then(|| value.to_string())
+}
+
 fn status_name(status: RenderStatus) -> &'static str {
     match status {
         RenderStatus::Final => "final",
@@ -331,6 +346,9 @@ mod tests {
                 keymap: Keymap::ViCommand,
                 env: PromptEnv {
                     virtual_env: Some(PathBuf::from("/tmp/nova-venv")),
+                    in_nix_shell: Some("pure".to_string()),
+                    nix_shell_name: Some("nova".to_string()),
+                    nix_shell_level: Some("1".to_string()),
                 },
             },
         });

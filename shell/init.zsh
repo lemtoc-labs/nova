@@ -130,7 +130,7 @@ _nova_send_request() {
     columns=80
   fi
 
-  local frame="R${_nova_nul}${_nova_gen}${_nova_nul}${PWD}${_nova_nul}${exit_status}${_nova_nul}${duration_ms}${_nova_nul}${columns}${_nova_nul}${KEYMAP:-main}${_nova_nul}${VIRTUAL_ENV:-}${_nova_rs}"
+  local frame="R${_nova_nul}${_nova_gen}${_nova_nul}${PWD}${_nova_nul}${exit_status}${_nova_nul}${duration_ms}${_nova_nul}${columns}${_nova_nul}${KEYMAP:-main}${_nova_nul}${VIRTUAL_ENV:-}${_nova_nul}${IN_NIX_SHELL:-}${_nova_nul}${name:-}${_nova_nul}${NIX_SHELL_LEVEL:-}${_nova_rs}"
   syswrite -o "$_nova_req_fd" -- "$frame" >/dev/null 2>&1
 }
 
@@ -166,7 +166,7 @@ _nova_apply_record() {
 
   case "${fields[1]}" in
     H)
-      if [[ "${fields[2]}" == 2 && "${fields[3]}" == "$_nova_session_token" ]]; then
+      if [[ "${fields[2]}" == 3 && "${fields[3]}" == "$_nova_session_token" ]]; then
         _nova_handshake_ok=1
       fi
       ;;

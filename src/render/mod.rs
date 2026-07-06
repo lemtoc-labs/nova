@@ -257,7 +257,7 @@ mod tests {
     use crate::cache::AsyncValue;
     use crate::config::{Config, LayoutConfig, LineConfig};
     use crate::segments::Style;
-    use crate::state::Keymap;
+    use crate::state::{Keymap, PromptEnv};
 
     #[test]
     fn snapshots_two_line_first_line_right_prompt() {
@@ -422,6 +422,34 @@ mod tests {
                 .prompt
                 .contains("100%%real")
         );
+    }
+
+    #[test]
+    fn renders_nix_shell_sync_segment() {
+        let state = PromptState {
+            cwd: PathBuf::from("/repo"),
+            exit_status: 0,
+            duration_ms: None,
+            columns: 80,
+            keymap: Keymap::Main,
+            env: PromptEnv {
+                in_nix_shell: Some("pure".to_string()),
+                ..PromptEnv::default()
+            },
+        };
+        let config = Config {
+            layout: LayoutConfig {
+                lines: 1,
+                line1: LineConfig {
+                    left: vec!["nix_shell".to_string()],
+                    right: Vec::new(),
+                },
+                line2: LineConfig::default(),
+            },
+            segments: Default::default(),
+        };
+
+        assert!(render(&config, &state).prompt.contains("❄️ pure"));
     }
 
     proptest! {

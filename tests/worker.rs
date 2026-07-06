@@ -440,6 +440,7 @@ fn worker_sends_update_when_python_virtual_env_finishes() {
         160,
         PromptEnv {
             virtual_env: Some(virtual_env),
+            ..PromptEnv::default()
         },
     );
     let (first_status, first_output) = read_prompt_response(&mut response, 1);

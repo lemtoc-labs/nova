@@ -173,7 +173,7 @@ impl PromptArgs {
                 duration_ms: self.duration_ms,
                 columns: self.columns,
                 keymap: self.keymap,
-                env: Default::default(),
+                env: nova::state::PromptEnv::from_current_process(),
             },
         );
 

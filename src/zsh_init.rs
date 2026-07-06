@@ -47,4 +47,14 @@ mod tests {
 
         assert!(script.contains("${KEYMAP:-main}${_nova_nul}${VIRTUAL_ENV:-}"));
     }
+
+    #[test]
+    fn sends_nix_shell_env_in_render_requests() {
+        let script = render_init_script(Path::new("/tmp/nova"));
+
+        assert!(
+            script
+                .contains("${IN_NIX_SHELL:-}${_nova_nul}${name:-}${_nova_nul}${NIX_SHELL_LEVEL:-}")
+        );
+    }
 }
