@@ -12,7 +12,7 @@ use std::time::{Duration, Instant};
 
 use thiserror::Error;
 
-use crate::cache::{CacheKey, SegmentCache};
+use crate::cache::{AsyncValue, CacheKey, SegmentCache};
 use crate::config::load::load_config;
 use crate::config::{Config, SegmentConfig};
 use crate::render::{AsyncSegmentValues, LoweredPrompt, render_with_async};
@@ -113,11 +113,12 @@ pub fn run(options: WorkerOptions) -> Result<(), WorkerError> {
                     let config = load_config(None).unwrap_or_default();
                     let async_values = async_values(&cache, &request.state.cwd, &config);
                     let output = render_with_async(&config, &request.state, &async_values);
+                    let status = render_status(&config, &async_values);
                     write_record(
                         &mut response,
                         &WorkerRecord::Prompt {
                             generation: request.generation,
-                            status: RenderStatus::Final,
+                            status,
                             output: output.clone(),
                         },
                     )?;
@@ -243,12 +244,13 @@ fn write_update_if_active(
     if output == active_prompt.output {
         return Ok(());
     }
+    let status = render_status(&active_prompt.config, &async_values);
 
     write_record(
         response,
         &WorkerRecord::Update {
             generation,
-            status: RenderStatus::Final,
+            status,
             output: output.clone(),
         },
     )?;
@@ -446,6 +448,24 @@ fn config_uses_segment(config: &Config, id: &str) -> bool {
             .any(|segment| segment == id)
 }
 
+fn render_status(config: &Config, async_values: &AsyncSegmentValues) -> RenderStatus {
+    let has_incomplete_async_segment = ["git_branch", "git_status", "rust_version"]
+        .iter()
+        .filter(|id| config_uses_segment(config, id))
+        .any(|id| {
+            matches!(
+                async_values.get(*id),
+                None | Some(AsyncValue::Loading | AsyncValue::Stale(_))
+            )
+        });
+
+    if has_incomplete_async_segment {
+        RenderStatus::Partial
+    } else {
+        RenderStatus::Final
+    }
+}
+
 fn segment_timeout(config: &SegmentConfig, default: Duration) -> Duration {
     config
         .timeout_ms
@@ -519,5 +539,72 @@ mod tests {
         };
 
         assert_eq!(segment_ttl(&config, Duration::from_secs(1)), Duration::ZERO);
+    }
+
+    #[test]
+    fn render_status_is_partial_when_async_values_are_loading_or_stale() {
+        let config = Config::default();
+
+        assert_eq!(
+            render_status(&config, &AsyncSegmentValues::new()),
+            RenderStatus::Partial
+        );
+
+        let values = AsyncSegmentValues::from([
+            ("git_branch".to_string(), AsyncValue::Failed),
+            (
+                "git_status".to_string(),
+                AsyncValue::Stale(SegmentContent::new(
+                    "git_status",
+                    "[+1]",
+                    Default::default(),
+                )),
+            ),
+            ("rust_version".to_string(), AsyncValue::Failed),
+        ]);
+        assert_eq!(render_status(&config, &values), RenderStatus::Partial);
+    }
+
+    #[test]
+    fn render_status_is_final_when_async_values_are_ready_or_failed() {
+        let config = Config::default();
+        let values = AsyncSegmentValues::from([
+            (
+                "git_branch".to_string(),
+                AsyncValue::Ready(SegmentContent::new(
+                    "git_branch",
+                    "main",
+                    Default::default(),
+                )),
+            ),
+            ("git_status".to_string(), AsyncValue::Failed),
+            ("rust_version".to_string(), AsyncValue::Failed),
+        ]);
+
+        assert_eq!(render_status(&config, &values), RenderStatus::Final);
+    }
+
+    #[test]
+    fn render_status_is_final_when_config_has_no_async_segments() {
+        let config = Config::from_toml(
+            r#"
+            [layout]
+            lines = 2
+
+            [layout.line1]
+            left = ["dir"]
+            right = ["duration"]
+
+            [layout.line2]
+            left = ["exit_status", "prompt_char"]
+            right = []
+            "#,
+        )
+        .expect("sync-only config should parse");
+
+        assert_eq!(
+            render_status(&config, &AsyncSegmentValues::new()),
+            RenderStatus::Final
+        );
     }
 }

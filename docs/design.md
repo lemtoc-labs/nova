@@ -208,10 +208,11 @@ Rules:
   side stores the last applied `gen` and discards any record with a smaller
   one; the worker drops queued work for superseded generations.
 - `partial` means async data is still loading or stale; `final` means every
-  active segment is fresh. zsh does not interpret this beyond debugging. The
-  worker renders `Ready` and `Stale` values into the prompt and omits
-  `Loading`/`Failed` values so unavailable async data does not move the input
-  line.
+  active async value is ready or failed. zsh does not interpret this beyond
+  debugging. The worker renders `Ready` and `Stale` values into the prompt and
+  omits `Loading`/`Failed` values so unavailable async data does not move the
+  input line. `Failed` is settled unavailable, so it does not force a
+  status-only update when prompt text is unchanged.
 - On a version mismatch in the handshake (stale binary vs. new init script),
   zsh permanently falls back to the plain prompt for the session and warns
   once. A `session_token` mismatch (stale worker from a previous shell) is

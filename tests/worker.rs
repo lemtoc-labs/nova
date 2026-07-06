@@ -69,7 +69,7 @@ fn worker_renders_prompt_over_fifos() {
     };
 
     assert_eq!(generation, 3);
-    assert_eq!(status, RenderStatus::Final);
+    assert_eq!(status, RenderStatus::Partial);
     assert!(output.prompt.contains("/tmp/nova"));
     assert!(output.prompt.contains("❯"));
 
@@ -111,7 +111,8 @@ fn worker_sends_update_when_git_status_finishes() {
     );
 
     write_render_request(&mut request, 1, repo.path().to_path_buf(), 160);
-    let first_output = read_prompt_output(&mut response, 1);
+    let (first_status, first_output) = read_prompt_response(&mut response, 1);
+    assert_eq!(first_status, RenderStatus::Partial);
     assert!(
         !first_output.prompt.contains("[+1]"),
         "first render should not block on git status: {}",
@@ -189,14 +190,16 @@ fn worker_sends_update_when_rust_version_finishes() {
     );
 
     write_render_request(&mut request, 1, project, 160);
-    let first_output = read_prompt_output(&mut response, 1);
+    let (first_status, first_output) = read_prompt_response(&mut response, 1);
+    assert_eq!(first_status, RenderStatus::Partial);
     assert!(
         !first_output.prompt.contains("rust 1.96.1"),
         "first render should not block on rust version: {}",
         first_output.prompt
     );
 
-    let update_output = read_update_output(&mut response, 1);
+    let (update_status, update_output) = read_update_response(&mut response, 1);
+    assert_eq!(update_status, RenderStatus::Final);
     assert!(update_output.prompt.contains("rust 1.96.1"));
 
     drop(request);
@@ -287,19 +290,22 @@ exit 1
     );
 
     write_render_request(&mut request, 1, repo.clone(), 160);
-    let first_output = read_prompt_output(&mut response, 1);
+    let (first_status, first_output) = read_prompt_response(&mut response, 1);
+    assert_eq!(first_status, RenderStatus::Partial);
     assert!(
         !first_output.prompt.contains("[+1]"),
         "first render should not block on git status: {}",
         first_output.prompt
     );
 
-    let update_output = read_update_output(&mut response, 1);
+    let (update_status, update_output) = read_update_response(&mut response, 1);
+    assert_eq!(update_status, RenderStatus::Partial);
     assert!(update_output.prompt.contains("main"));
     assert!(update_output.prompt.contains("[+1]"));
 
     write_render_request(&mut request, 2, repo.clone(), 160);
-    let cached_output = read_prompt_output(&mut response, 2);
+    let (cached_status, cached_output) = read_prompt_response(&mut response, 2);
+    assert_eq!(cached_status, RenderStatus::Partial);
     assert!(
         cached_output.prompt.contains("main"),
         "cache-hit prompt should keep stale branch: {}",
@@ -316,7 +322,8 @@ exit 1
     });
 
     write_render_request(&mut request, 3, repo, 160);
-    let stale_output = read_prompt_output(&mut response, 3);
+    let (stale_status, stale_output) = read_prompt_response(&mut response, 3);
+    assert_eq!(stale_status, RenderStatus::Partial);
     assert!(
         stale_output.prompt.contains("main"),
         "failed refresh should not clear stale branch: {}",
@@ -404,7 +411,8 @@ exit 1
     );
 
     write_render_request(&mut request, 1, repo, 160);
-    let first_output = read_prompt_output(&mut response, 1);
+    let (first_status, first_output) = read_prompt_response(&mut response, 1);
+    assert_eq!(first_status, RenderStatus::Partial);
     assert!(
         !first_output.prompt.contains("main"),
         "initial failed git branch should be omitted: {}",
@@ -448,10 +456,10 @@ fn write_render_request(request: &mut fs::File, generation: u64, cwd: PathBuf, c
         .expect("request should be written");
 }
 
-fn read_prompt_output(
+fn read_prompt_response(
     response: &mut WorkerReader,
     expected_generation: u64,
-) -> nova::render::LoweredPrompt {
+) -> (RenderStatus, nova::render::LoweredPrompt) {
     let WorkerRecord::Prompt {
         generation,
         status,
@@ -462,14 +470,20 @@ fn read_prompt_output(
     };
 
     assert_eq!(generation, expected_generation);
-    assert_eq!(status, RenderStatus::Final);
-    output
+    (status, output)
 }
 
 fn read_update_output(
     response: &mut WorkerReader,
     expected_generation: u64,
 ) -> nova::render::LoweredPrompt {
+    read_update_response(response, expected_generation).1
+}
+
+fn read_update_response(
+    response: &mut WorkerReader,
+    expected_generation: u64,
+) -> (RenderStatus, nova::render::LoweredPrompt) {
     let WorkerRecord::Update {
         generation,
         status,
@@ -480,8 +494,7 @@ fn read_update_output(
     };
 
     assert_eq!(generation, expected_generation);
-    assert_eq!(status, RenderStatus::Final);
-    output
+    (status, output)
 }
 
 fn open_fifo_write(path: impl AsRef<Path>) -> fs::File {
