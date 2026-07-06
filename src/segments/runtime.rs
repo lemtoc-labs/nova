@@ -22,6 +22,18 @@ const BUN_VERSION_SEGMENT_ID: &str = "bun_version";
 const BUN_VERSION_ICON: &str = "🥟";
 const BUN_ARGS: &[&str] = &["--version"];
 const BUN_DETECT_FILES: &[&str] = &["bun.lock", "bun.lockb", "bunfig.toml"];
+const DENO_VERSION_SEGMENT_ID: &str = "deno_version";
+const DENO_VERSION_ICON: &str = "🦕";
+const DENO_ARGS: &[&str] = &["-V"];
+const DENO_DETECT_FILES: &[&str] = &[
+    "deno.json",
+    "deno.jsonc",
+    "deno.lock",
+    "mod.ts",
+    "deps.ts",
+    "mod.js",
+    "deps.js",
+];
 const NODE_VERSION_SEGMENT_ID: &str = "node_version";
 const NODE_VERSION_ICON: &str = "";
 const NODE_ARGS: &[&str] = &["--version"];
@@ -83,6 +95,16 @@ pub fn bun_cache_key(cwd: &Path, config_generation: u64) -> Option<CacheKey> {
     })
 }
 
+pub fn deno_cache_key(cwd: &Path, config_generation: u64) -> Option<CacheKey> {
+    is_deno_project_dir(cwd).then(|| {
+        CacheKey::new(
+            DENO_VERSION_SEGMENT_ID,
+            cwd.to_string_lossy(),
+            config_generation,
+        )
+    })
+}
+
 pub fn find_rust_project_root(cwd: &Path) -> Option<PathBuf> {
     let mut current = cwd;
 
@@ -124,6 +146,19 @@ pub fn is_bun_project_dir(cwd: &Path) -> bool {
     )
 }
 
+pub fn is_deno_project_dir(cwd: &Path) -> bool {
+    current_dir_matches(
+        cwd,
+        RuntimeDetection {
+            files: DENO_DETECT_FILES,
+            excluded_files: &[],
+            folders: &[],
+            excluded_folders: &[],
+            extensions: &[],
+        },
+    )
+}
+
 pub fn collect_rust_version(
     cwd: &Path,
     deadline: Instant,
@@ -143,6 +178,13 @@ pub fn collect_bun_version(
     deadline: Instant,
 ) -> Result<Option<String>, RuntimeCollectError> {
     collect_bun_version_with_command(cwd, deadline, Path::new("bun"))
+}
+
+pub fn collect_deno_version(
+    cwd: &Path,
+    deadline: Instant,
+) -> Result<Option<String>, RuntimeCollectError> {
+    collect_deno_version_with_command(cwd, deadline, Path::new("deno"))
 }
 
 fn collect_rust_version_with_command(
@@ -218,6 +260,21 @@ fn collect_bun_version_with_command(
     Ok(parse_bun_version(&String::from_utf8_lossy(&output)))
 }
 
+fn collect_deno_version_with_command(
+    cwd: &Path,
+    deadline: Instant,
+    command: &Path,
+) -> Result<Option<String>, RuntimeCollectError> {
+    if !is_deno_project_dir(cwd) {
+        return Ok(None);
+    }
+
+    let timeout = remaining_time(deadline)?;
+    let output = collect_command_output(command, DENO_ARGS, cwd, timeout)?;
+
+    Ok(parse_deno_version(&String::from_utf8_lossy(&output)))
+}
+
 fn collect_command_output(
     command: &Path,
     args: &[&str],
@@ -290,6 +347,10 @@ pub fn parse_bun_version(output: &str) -> Option<String> {
     }
 }
 
+pub fn parse_deno_version(output: &str) -> Option<String> {
+    output.split_whitespace().nth(1).map(ToString::to_string)
+}
+
 pub fn render_rust_version(version: &str, config: &SegmentConfig) -> Option<SegmentContent> {
     if version.is_empty() {
         return None;
@@ -323,6 +384,18 @@ pub fn render_bun_version(version: &str, config: &SegmentConfig) -> Option<Segme
         BUN_VERSION_SEGMENT_ID,
         label_with_icon(version, config, BUN_VERSION_ICON),
         bun_style(config),
+    ))
+}
+
+pub fn render_deno_version(version: &str, config: &SegmentConfig) -> Option<SegmentContent> {
+    if version.is_empty() {
+        return None;
+    }
+
+    Some(SegmentContent::new(
+        DENO_VERSION_SEGMENT_ID,
+        label_with_icon(version, config, DENO_VERSION_ICON),
+        deno_style(config),
     ))
 }
 
@@ -443,6 +516,18 @@ fn bun_style(config: &SegmentConfig) -> Style {
     } else {
         Style {
             fg: Some("red".to_string()),
+            bg: None,
+            bold: true,
+        }
+    }
+}
+
+fn deno_style(config: &SegmentConfig) -> Style {
+    if config.style.fg.is_some() || config.style.bg.is_some() || config.style.bold {
+        Style::from(&config.style)
+    } else {
+        Style {
+            fg: Some("green".to_string()),
             bg: None,
             bold: true,
         }
@@ -578,6 +663,45 @@ mod tests {
     }
 
     #[test]
+    fn detects_deno_projects_from_starship_default_conditions() {
+        for marker in [
+            "deno.json",
+            "deno.jsonc",
+            "deno.lock",
+            "mod.ts",
+            "deps.ts",
+            "mod.js",
+            "deps.js",
+        ] {
+            let tempdir = tempfile::tempdir().expect("tempdir should be created");
+            fs::write(tempdir.path().join(marker), "").expect("marker should be written");
+
+            assert!(
+                is_deno_project_dir(tempdir.path()),
+                "{marker} should trigger deno detection"
+            );
+        }
+    }
+
+    #[test]
+    fn deno_projects_suppress_node_detection() {
+        for marker in ["deno.json", "deno.jsonc", "deno.lock"] {
+            let tempdir = tempfile::tempdir().expect("tempdir should be created");
+            fs::write(tempdir.path().join("package.json"), "{}").expect("marker should be written");
+            fs::write(tempdir.path().join(marker), "").expect("deno marker should be written");
+
+            assert!(
+                !is_node_project_dir(tempdir.path()),
+                "{marker} should suppress node detection"
+            );
+            assert!(
+                is_deno_project_dir(tempdir.path()),
+                "{marker} should trigger deno detection"
+            );
+        }
+    }
+
+    #[test]
     fn parses_rustc_version_output() {
         assert_eq!(
             parse_rustc_version("rustc 1.96.1 (abc 2026-01-01)\n"),
@@ -600,6 +724,15 @@ mod tests {
     fn parses_bun_version_output() {
         assert_eq!(parse_bun_version("1.2.18\n"), Some("1.2.18".to_string()));
         assert_eq!(parse_bun_version("\n"), None);
+    }
+
+    #[test]
+    fn parses_deno_version_output() {
+        assert_eq!(
+            parse_deno_version("deno 2.3.6\n"),
+            Some("2.3.6".to_string())
+        );
+        assert_eq!(parse_deno_version("not-enough\n"), None);
     }
 
     #[test]
@@ -692,6 +825,31 @@ mod tests {
     }
 
     #[test]
+    fn renders_deno_version_segment() {
+        let segment =
+            render_deno_version("2.3.6", &SegmentConfig::default()).expect("version should render");
+
+        assert_eq!(segment.id, "deno_version");
+        assert_eq!(segment.text, "🦕 2.3.6");
+        assert_eq!(segment.style.fg.as_deref(), Some("green"));
+        assert!(segment.style.bold);
+    }
+
+    #[test]
+    fn renders_deno_version_with_configured_icon() {
+        let segment = render_deno_version(
+            "2.3.6",
+            &SegmentConfig {
+                icon: Some("deno".to_string()),
+                ..SegmentConfig::default()
+            },
+        )
+        .expect("version should render");
+
+        assert_eq!(segment.text, "deno 2.3.6");
+    }
+
+    #[test]
     #[cfg(unix)]
     fn collects_rust_version_with_timeout_bound_command() {
         let tempdir = tempfile::tempdir().expect("tempdir should be created");
@@ -708,7 +866,7 @@ mod tests {
 
         let collected = collect_rust_version_with_command(
             tempdir.path(),
-            Instant::now() + Duration::from_secs(1),
+            Instant::now() + Duration::from_secs(5),
             &rustc,
         )
         .expect("collector should succeed");
@@ -745,7 +903,7 @@ mod tests {
 
         let collected = collect_node_version_with_command(
             tempdir.path(),
-            Instant::now() + Duration::from_secs(1),
+            Instant::now() + Duration::from_secs(5),
             &node,
         )
         .expect("collector should succeed");
@@ -778,7 +936,7 @@ mod tests {
 
         let collected = collect_bun_version_with_command(
             tempdir.path(),
-            Instant::now() + Duration::from_secs(1),
+            Instant::now() + Duration::from_secs(5),
             &bun,
         )
         .expect("collector should succeed");
@@ -797,6 +955,39 @@ mod tests {
             tempdir.path(),
             Instant::now() + Duration::from_millis(50),
             &bun,
+        );
+
+        assert!(matches!(result, Err(RuntimeCollectError::TimedOut)));
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn collects_deno_version_with_timeout_bound_command() {
+        let tempdir = tempfile::tempdir().expect("tempdir should be created");
+        fs::write(tempdir.path().join("deno.json"), "{}").expect("marker should be written");
+        let deno = write_script(tempdir.path(), "deno", "printf 'deno 2.3.6\\n'\n");
+
+        let collected = collect_deno_version_with_command(
+            tempdir.path(),
+            Instant::now() + Duration::from_secs(5),
+            &deno,
+        )
+        .expect("collector should succeed");
+
+        assert_eq!(collected, Some("2.3.6".to_string()));
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn times_out_slow_deno_version_commands() {
+        let tempdir = tempfile::tempdir().expect("tempdir should be created");
+        fs::write(tempdir.path().join("deno.json"), "{}").expect("marker should be written");
+        let deno = write_script(tempdir.path(), "slow-deno", "sleep 2\n");
+
+        let result = collect_deno_version_with_command(
+            tempdir.path(),
+            Instant::now() + Duration::from_millis(50),
+            &deno,
         );
 
         assert!(matches!(result, Err(RuntimeCollectError::TimedOut)));

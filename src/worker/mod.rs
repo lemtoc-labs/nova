@@ -23,8 +23,9 @@ use crate::segments::git::{
     collect_git_status, git_cache_key, render_git_branch, render_git_status,
 };
 use crate::segments::runtime::{
-    bun_cache_key, collect_bun_version, collect_node_version, collect_rust_version, node_cache_key,
-    render_bun_version, render_node_version, render_rust_version, rust_cache_key,
+    bun_cache_key, collect_bun_version, collect_deno_version, collect_node_version,
+    collect_rust_version, deno_cache_key, node_cache_key, render_bun_version, render_deno_version,
+    render_node_version, render_rust_version, rust_cache_key,
 };
 use crate::state::PromptState;
 use jobs::{JobOutcome, JobPool, JobResult};
@@ -381,6 +382,13 @@ fn async_values(
         values.insert("bun_version".to_string(), cache.lookup(&key, now, ttl));
     }
 
+    if config_uses_segment(config, "deno_version")
+        && let Some(key) = deno_cache_key(cwd, config_generation)
+    {
+        let ttl = segment_ttl(&config.segment("deno_version"), RUNTIME_REFRESH_TTL);
+        values.insert("deno_version".to_string(), cache.lookup(&key, now, ttl));
+    }
+
     if config_uses_segment(config, "node_version")
         && let Some(key) = node_cache_key(cwd, config_generation)
     {
@@ -416,6 +424,14 @@ fn schedule_async_refreshes(
         config_generation,
     );
     schedule_bun_refresh(
+        pool,
+        cache,
+        generation,
+        cwd.clone(),
+        config,
+        config_generation,
+    );
+    schedule_deno_refresh(
         pool,
         cache,
         generation,
@@ -605,6 +621,49 @@ fn schedule_bun_refresh(
             .ok()
             .flatten()
             .and_then(|version| render_bun_version(&version, &bun_config));
+        AsyncJobSegments {
+            segments: vec![AsyncJobSegment {
+                key: job_key,
+                content,
+            }],
+        }
+    });
+
+    if spawn_result.is_err() {
+        cache.complete_failure(key, Instant::now());
+    }
+}
+
+fn schedule_deno_refresh(
+    pool: &JobPool<AsyncJobSegments>,
+    cache: &mut SegmentCache,
+    generation: u64,
+    cwd: PathBuf,
+    config: &Config,
+    config_generation: u64,
+) {
+    if !config_uses_segment(config, "deno_version") {
+        return;
+    }
+
+    let Some(key) = deno_cache_key(&cwd, config_generation) else {
+        return;
+    };
+
+    let deno_config = config.segment("deno_version");
+    let ttl = segment_ttl(&deno_config, RUNTIME_REFRESH_TTL);
+    if !cache.needs_refresh(&key, Instant::now(), ttl) {
+        return;
+    }
+
+    cache.mark_inflight(key.clone());
+    let timeout = segment_timeout(&deno_config, RUNTIME_TIMEOUT);
+    let job_key = key.clone();
+    let spawn_result = pool.spawn(generation, key.clone(), timeout, move |deadline| {
+        let content = collect_deno_version(&cwd, deadline)
+            .ok()
+            .flatten()
+            .and_then(|version| render_deno_version(&version, &deno_config));
         AsyncJobSegments {
             segments: vec![AsyncJobSegment {
                 key: job_key,

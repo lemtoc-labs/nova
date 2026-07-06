@@ -14,6 +14,7 @@ use self::error::{ConfigError, ConfigWarning};
 const KNOWN_SEGMENTS: &[&str] = &[
     "dir",
     "duration",
+    "deno_version",
     "exit_status",
     "bun_version",
     "git_branch",
@@ -157,6 +158,7 @@ impl Default for LayoutConfig {
                     "git_status".to_string(),
                     "rust_version".to_string(),
                     "bun_version".to_string(),
+                    "deno_version".to_string(),
                     "node_version".to_string(),
                 ],
                 right: vec!["duration".to_string()],
@@ -186,6 +188,7 @@ mod tests {
                 "git_status",
                 "rust_version",
                 "bun_version",
+                "deno_version",
                 "node_version"
             ]
         );
