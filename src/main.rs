@@ -7,13 +7,15 @@ use std::process::ExitCode;
 use nova::config::load::load_config;
 use nova::render::render;
 use nova::state::{Keymap, PromptState};
+use nova::zsh_init::render_init_script;
 
 fn main() -> ExitCode {
     let args = env::args().skip(1).collect::<Vec<_>>();
     match args.first().map(String::as_str) {
+        Some("init") => run_init(&args[1..]),
         Some("prompt") => run_prompt(&args[1..]),
         Some("check") => run_check(&args[1..]),
-        Some("init") | Some("worker") => not_implemented(),
+        Some("worker") => not_implemented(),
         Some("--help") | Some("-h") | None => {
             print_help();
             ExitCode::SUCCESS
@@ -21,6 +23,33 @@ fn main() -> ExitCode {
         Some(command) => {
             eprintln!("nova: unknown command `{command}`");
             print_help();
+            ExitCode::FAILURE
+        }
+    }
+}
+
+fn run_init(args: &[String]) -> ExitCode {
+    match args {
+        [shell] if shell == "zsh" => match env::current_exe() {
+            Ok(path) => {
+                print!("{}", render_init_script(&path));
+                ExitCode::SUCCESS
+            }
+            Err(error) => {
+                eprintln!("nova: failed to locate current executable: {error}");
+                ExitCode::FAILURE
+            }
+        },
+        [shell] => {
+            eprintln!("nova: unsupported init shell `{shell}`");
+            ExitCode::FAILURE
+        }
+        [] => {
+            eprintln!("nova: init requires a shell name");
+            ExitCode::FAILURE
+        }
+        _ => {
+            eprintln!("nova: init accepts only one shell name");
             ExitCode::FAILURE
         }
     }
@@ -79,6 +108,7 @@ impl PromptArgs {
             columns: env::var("COLUMNS")
                 .ok()
                 .and_then(|value| value.parse::<u16>().ok())
+                .filter(|columns| *columns > 0)
                 .unwrap_or(80),
             exit_status: 0,
             duration_ms: None,
@@ -95,7 +125,7 @@ impl PromptArgs {
                     index += 2;
                 }
                 "--cols" => {
-                    parsed.columns = parse_value(required_value(args, index, "--cols")?, "--cols")?;
+                    parsed.columns = parse_columns(required_value(args, index, "--cols")?)?;
                     index += 2;
                 }
                 "--exit" => {
@@ -224,6 +254,15 @@ where
     value
         .parse()
         .map_err(|error| format!("invalid value for {option}: {error}"))
+}
+
+fn parse_columns(value: &str) -> Result<u16, String> {
+    let columns = parse_value(value, "--cols")?;
+    if columns == 0 {
+        Err("--cols must be greater than 0".to_string())
+    } else {
+        Ok(columns)
+    }
 }
 
 fn zsh_quote(input: &str) -> String {

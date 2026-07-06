@@ -26,6 +26,19 @@ fn rejects_unknown_commands() {
 }
 
 #[test]
+fn renders_zsh_init_script() {
+    let mut command = Command::cargo_bin("nova").expect("nova binary should build");
+
+    command
+        .arg("init")
+        .arg("zsh")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("add-zsh-hook precmd _nova_precmd"))
+        .stdout(predicate::str::contains("typeset -g _nova_bin='"));
+}
+
+#[test]
 fn renders_prompt_command() {
     let mut command = Command::cargo_bin("nova").expect("nova binary should build");
 
@@ -41,6 +54,19 @@ fn renders_prompt_command() {
         .success()
         .stdout(predicate::str::contains("/tmp/nova"))
         .stdout(predicate::str::contains("❯"));
+}
+
+#[test]
+fn rejects_zero_columns() {
+    let mut command = Command::cargo_bin("nova").expect("nova binary should build");
+
+    command
+        .arg("prompt")
+        .arg("--cols")
+        .arg("0")
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("--cols must be greater than 0"));
 }
 
 #[test]
