@@ -10,7 +10,10 @@ use thiserror::Error;
 use wait_timeout::ChildExt;
 
 use crate::cache::CacheKey;
+use crate::config::SegmentConfig;
+use crate::segments::{SegmentContent, Style};
 
+const GIT_BRANCH_SEGMENT_ID: &str = "git_branch";
 const GIT_STATUS_SEGMENT_ID: &str = "git_status";
 const GIT_STATUS_ARGS: &[&str] = &[
     "--no-optional-locks",
@@ -44,6 +47,28 @@ impl GitStatus {
             || self.ahead > 0
             || self.behind > 0
     }
+}
+
+pub fn render_git_branch(status: &GitStatus, config: &SegmentConfig) -> Option<SegmentContent> {
+    let text = status
+        .branch
+        .clone()
+        .or_else(|| status.head_oid.as_deref().map(detached_head_label))?;
+
+    Some(SegmentContent::new(
+        GIT_BRANCH_SEGMENT_ID,
+        text,
+        git_branch_style(config),
+    ))
+}
+
+pub fn render_git_status(status: &GitStatus, config: &SegmentConfig) -> Option<SegmentContent> {
+    let text = format_git_indicators(status)?;
+    Some(SegmentContent::new(
+        GIT_STATUS_SEGMENT_ID,
+        text,
+        git_status_style(config),
+    ))
 }
 
 #[derive(Debug, Error)]
@@ -230,6 +255,69 @@ fn parse_changed_entry(record: &str, status: &mut GitStatus) {
     }
 }
 
+const DETACHED_OID_PREFIX_LEN: usize = 7;
+
+fn detached_head_label(oid: &str) -> String {
+    format!("HEAD {}", short_oid(oid))
+}
+
+fn short_oid(oid: &str) -> &str {
+    &oid[..oid.len().min(DETACHED_OID_PREFIX_LEN)]
+}
+
+fn format_git_indicators(status: &GitStatus) -> Option<String> {
+    let mut indicators = Vec::new();
+    push_indicator(&mut indicators, "=", status.conflicted);
+    push_indicator(&mut indicators, "!", status.modified);
+    push_indicator(&mut indicators, "+", status.staged);
+    push_indicator(&mut indicators, "?", status.untracked);
+    push_indicator(&mut indicators, "$", status.stashed);
+    push_indicator(&mut indicators, "⇡", status.ahead);
+    push_indicator(&mut indicators, "⇣", status.behind);
+
+    if indicators.is_empty() {
+        None
+    } else {
+        Some(format!("[{}]", indicators.join(" ")))
+    }
+}
+
+fn push_indicator(indicators: &mut Vec<String>, symbol: &str, count: usize) {
+    if count > 0 {
+        indicators.push(format!("{symbol}{count}"));
+    }
+}
+
+fn git_branch_style(config: &SegmentConfig) -> Style {
+    style_or_default(
+        config,
+        Style {
+            fg: Some("magenta".to_string()),
+            bg: None,
+            bold: true,
+        },
+    )
+}
+
+fn git_status_style(config: &SegmentConfig) -> Style {
+    style_or_default(
+        config,
+        Style {
+            fg: Some("red".to_string()),
+            bg: None,
+            bold: true,
+        },
+    )
+}
+
+fn style_or_default(config: &SegmentConfig, default: Style) -> Style {
+    if config.style.fg.is_some() || config.style.bg.is_some() || config.style.bold {
+        Style::from(&config.style)
+    } else {
+        default
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::path::Path;
@@ -237,6 +325,98 @@ mod tests {
     use std::time::Duration;
 
     use super::*;
+
+    #[test]
+    fn renders_branch_segment() {
+        let status = GitStatus {
+            branch: Some("main".to_string()),
+            ..GitStatus::default()
+        };
+
+        let rendered =
+            render_git_branch(&status, &SegmentConfig::default()).expect("branch should render");
+
+        assert_eq!(rendered.id, "git_branch");
+        assert_eq!(rendered.text, "main");
+        assert_eq!(rendered.style.fg.as_deref(), Some("magenta"));
+        assert!(rendered.style.bold);
+    }
+
+    #[test]
+    fn renders_detached_head_segment_with_short_oid() {
+        let status = GitStatus {
+            head_oid: Some("abcdef0123456789".to_string()),
+            ..GitStatus::default()
+        };
+
+        let rendered = render_git_branch(&status, &SegmentConfig::default())
+            .expect("detached head should render");
+
+        assert_eq!(rendered.text, "HEAD abcdef0");
+    }
+
+    #[test]
+    fn hides_branch_segment_when_branch_and_oid_are_absent() {
+        assert_eq!(
+            render_git_branch(&GitStatus::default(), &SegmentConfig::default()),
+            None
+        );
+    }
+
+    #[test]
+    fn renders_status_indicators_in_stable_order() {
+        let status = GitStatus {
+            staged: 2,
+            modified: 1,
+            untracked: 3,
+            conflicted: 4,
+            stashed: 5,
+            ahead: 6,
+            behind: 7,
+            ..GitStatus::default()
+        };
+
+        let rendered = render_git_status(&status, &SegmentConfig::default())
+            .expect("dirty status should render");
+
+        assert_eq!(rendered.id, "git_status");
+        assert_eq!(rendered.text, "[=4 !1 +2 ?3 $5 ⇡6 ⇣7]");
+        assert_eq!(rendered.style.fg.as_deref(), Some("red"));
+        assert!(rendered.style.bold);
+    }
+
+    #[test]
+    fn hides_status_segment_when_repository_is_clean() {
+        assert_eq!(
+            render_git_status(&GitStatus::default(), &SegmentConfig::default()),
+            None
+        );
+    }
+
+    #[test]
+    fn renderers_honor_custom_styles() {
+        let config = SegmentConfig {
+            style: crate::config::StyleConfig {
+                fg: Some("cyan".to_string()),
+                bg: None,
+                bold: false,
+            },
+            ..SegmentConfig::default()
+        };
+        let status = GitStatus {
+            branch: Some("main".to_string()),
+            staged: 1,
+            ..GitStatus::default()
+        };
+
+        let branch = render_git_branch(&status, &config).expect("branch should render");
+        let git_status = render_git_status(&status, &config).expect("status should render");
+
+        assert_eq!(branch.style.fg.as_deref(), Some("cyan"));
+        assert!(!branch.style.bold);
+        assert_eq!(git_status.style.fg.as_deref(), Some("cyan"));
+        assert!(!git_status.style.bold);
+    }
 
     #[test]
     fn builds_cache_key_from_repository_root() -> Result<(), Box<dyn std::error::Error>> {
