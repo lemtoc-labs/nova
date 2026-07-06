@@ -5,6 +5,7 @@ pub mod protocol;
 
 use std::fs::OpenOptions;
 use std::io::{Read, Write};
+use std::os::unix::fs::OpenOptionsExt;
 use std::path::PathBuf;
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
@@ -14,9 +15,10 @@ use thiserror::Error;
 use crate::cache::{CacheKey, SegmentCache};
 use crate::config::Config;
 use crate::config::load::load_config;
-use crate::render::{AsyncSegmentValues, render_with_async};
+use crate::render::{AsyncSegmentValues, LoweredPrompt, render_with_async};
 use crate::segments::SegmentContent;
 use crate::segments::git::{collect_git_status, render_git_branch, render_git_status};
+use crate::state::PromptState;
 use jobs::{JobOutcome, JobPool, JobResult};
 use protocol::{
     ClientRecord, FrameDecoder, RenderStatus, WorkerRecord, decode_client_record,
@@ -25,6 +27,7 @@ use protocol::{
 
 const CACHE_CAPACITY: usize = 128;
 const CONFIG_GENERATION: u64 = 0;
+const EVENT_POLL_INTERVAL: Duration = Duration::from_millis(10);
 const GIT_REFRESH_TTL: Duration = Duration::ZERO;
 const GIT_TIMEOUT: Duration = Duration::from_secs(1);
 const MAX_CONCURRENCY: usize = 2;
@@ -60,6 +63,7 @@ pub fn run(options: WorkerOptions) -> Result<(), WorkerError> {
     let response_path = options.runtime_dir.join("resp");
     let mut request = OpenOptions::new()
         .read(true)
+        .custom_flags(libc::O_NONBLOCK)
         .open(&request_path)
         .map_err(|source| WorkerError::OpenRequest {
             path: request_path,
@@ -85,40 +89,71 @@ pub fn run(options: WorkerOptions) -> Result<(), WorkerError> {
     let mut cache = SegmentCache::new(CACHE_CAPACITY);
     let (job_results, job_result_receiver) = mpsc::channel::<JobResult<GitJobSegments>>();
     let job_pool = JobPool::new(MAX_CONCURRENCY, job_results);
+    let mut active_prompt = None;
 
     loop {
-        let bytes_read = request.read(&mut buffer).map_err(WorkerError::Read)?;
-        if bytes_read == 0 {
-            return Ok(());
-        }
+        drain_job_results(
+            &job_result_receiver,
+            &mut cache,
+            &mut response,
+            &mut active_prompt,
+        )?;
 
-        let chunk = String::from_utf8_lossy(&buffer[..bytes_read]);
-        for frame in decoder.push(&chunk) {
-            drain_job_results(&job_result_receiver, &mut cache);
+        match request.read(&mut buffer) {
+            Ok(0) => return Ok(()),
+            Ok(bytes_read) => {
+                let chunk = String::from_utf8_lossy(&buffer[..bytes_read]);
+                for frame in decoder.push(&chunk) {
+                    let Ok(ClientRecord::Render(request)) = decode_client_record(&frame) else {
+                        continue;
+                    };
+                    let config = load_config(None).unwrap_or_default();
+                    let async_values = git_async_values(&cache, &request.state.cwd);
+                    let output = render_with_async(&config, &request.state, &async_values);
+                    write_record(
+                        &mut response,
+                        &WorkerRecord::Prompt {
+                            generation: request.generation,
+                            status: RenderStatus::Final,
+                            output: output.clone(),
+                        },
+                    )?;
 
-            let Ok(ClientRecord::Render(request)) = decode_client_record(&frame) else {
-                continue;
-            };
-            let config = load_config(None).unwrap_or_default();
-            let async_values = git_async_values(&cache, &request.state.cwd);
-            let output = render_with_async(&config, &request.state, &async_values);
-            write_record(
-                &mut response,
-                &WorkerRecord::Prompt {
-                    generation: request.generation,
-                    status: RenderStatus::Final,
-                    output,
-                },
-            )?;
-            schedule_git_refresh(
-                &job_pool,
-                &mut cache,
-                request.generation,
-                request.state.cwd,
-                &config,
-            );
+                    active_prompt = Some(ActivePrompt {
+                        generation: request.generation,
+                        state: request.state.clone(),
+                        config: config.clone(),
+                        output,
+                    });
+                    schedule_git_refresh(
+                        &job_pool,
+                        &mut cache,
+                        request.generation,
+                        request.state.cwd,
+                        &config,
+                    );
+                }
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                wait_for_job_result(
+                    &job_result_receiver,
+                    &mut cache,
+                    &mut response,
+                    &mut active_prompt,
+                )?;
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
+            Err(error) => return Err(WorkerError::Read(error)),
         }
     }
+}
+
+#[derive(Clone, Debug)]
+struct ActivePrompt {
+    generation: u64,
+    state: PromptState,
+    config: Config,
+    output: LoweredPrompt,
 }
 
 #[derive(Debug)]
@@ -130,20 +165,82 @@ struct GitJobSegments {
 fn drain_job_results(
     receiver: &mpsc::Receiver<JobResult<GitJobSegments>>,
     cache: &mut SegmentCache,
-) {
+    response: &mut impl Write,
+    active_prompt: &mut Option<ActivePrompt>,
+) -> Result<(), WorkerError> {
     while let Ok(result) = receiver.try_recv() {
-        let branch_key = git_branch_key_from_status_key(&result.key);
-        match result.outcome {
-            JobOutcome::Completed(segments) => {
-                complete_segment(cache, branch_key, segments.branch, result.finished_at);
-                complete_segment(cache, result.key, segments.status, result.finished_at);
-            }
-            JobOutcome::Panicked => {
-                cache.complete_failure(branch_key, result.finished_at);
-                cache.complete_failure(result.key, result.finished_at);
-            }
+        handle_job_result(result, cache, response, active_prompt)?;
+    }
+
+    Ok(())
+}
+
+fn wait_for_job_result(
+    receiver: &mpsc::Receiver<JobResult<GitJobSegments>>,
+    cache: &mut SegmentCache,
+    response: &mut impl Write,
+    active_prompt: &mut Option<ActivePrompt>,
+) -> Result<(), WorkerError> {
+    match receiver.recv_timeout(EVENT_POLL_INTERVAL) {
+        Ok(result) => handle_job_result(result, cache, response, active_prompt),
+        Err(mpsc::RecvTimeoutError::Timeout | mpsc::RecvTimeoutError::Disconnected) => Ok(()),
+    }
+}
+
+fn handle_job_result(
+    result: JobResult<GitJobSegments>,
+    cache: &mut SegmentCache,
+    response: &mut impl Write,
+    active_prompt: &mut Option<ActivePrompt>,
+) -> Result<(), WorkerError> {
+    let generation = result.generation;
+    complete_job_result(result, cache);
+    write_update_if_active(generation, cache, response, active_prompt)
+}
+
+fn complete_job_result(result: JobResult<GitJobSegments>, cache: &mut SegmentCache) {
+    let branch_key = git_branch_key_from_status_key(&result.key);
+    match result.outcome {
+        JobOutcome::Completed(segments) => {
+            complete_segment(cache, branch_key, segments.branch, result.finished_at);
+            complete_segment(cache, result.key, segments.status, result.finished_at);
+        }
+        JobOutcome::Panicked => {
+            cache.complete_failure(branch_key, result.finished_at);
+            cache.complete_failure(result.key, result.finished_at);
         }
     }
+}
+
+fn write_update_if_active(
+    generation: u64,
+    cache: &SegmentCache,
+    response: &mut impl Write,
+    active_prompt: &mut Option<ActivePrompt>,
+) -> Result<(), WorkerError> {
+    let Some(active_prompt) = active_prompt else {
+        return Ok(());
+    };
+    if generation != active_prompt.generation {
+        return Ok(());
+    }
+
+    let async_values = git_async_values(cache, &active_prompt.state.cwd);
+    let output = render_with_async(&active_prompt.config, &active_prompt.state, &async_values);
+    if output == active_prompt.output {
+        return Ok(());
+    }
+
+    write_record(
+        response,
+        &WorkerRecord::Update {
+            generation,
+            status: RenderStatus::Final,
+            output: output.clone(),
+        },
+    )?;
+    active_prompt.output = output;
+    Ok(())
 }
 
 fn complete_segment(

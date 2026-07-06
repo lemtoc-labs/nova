@@ -32,4 +32,12 @@ mod tests {
 
         assert!(script.contains("typeset -g _nova_bin='/tmp/no'\\''va'"));
     }
+
+    #[test]
+    fn registers_zle_line_init_for_pending_updates() {
+        let script = render_init_script(Path::new("/tmp/nova"));
+
+        assert!(script.contains("autoload -Uz add-zsh-hook add-zle-hook-widget"));
+        assert!(script.contains("add-zle-hook-widget line-init _nova_zle_line_init"));
+    }
 }

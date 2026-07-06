@@ -1,5 +1,6 @@
 #![cfg(unix)]
 
+use std::collections::VecDeque;
 use std::fs::{self, OpenOptions};
 use std::io::{Read, Write};
 use std::os::unix::fs::OpenOptionsExt;
@@ -33,7 +34,7 @@ fn worker_renders_prompt_over_fifos() {
         .expect("worker should spawn");
 
     let mut request = open_fifo_write(runtime_dir.join("req"));
-    let mut response = open_fifo_read(runtime_dir.join("resp"));
+    let mut response = WorkerReader::new(open_fifo_read(runtime_dir.join("resp")));
 
     assert_eq!(
         read_worker_record(&mut response),
@@ -77,7 +78,7 @@ fn worker_renders_prompt_over_fifos() {
 }
 
 #[test]
-fn worker_renders_cached_git_status_on_later_prompts() {
+fn worker_sends_update_when_git_status_finishes() {
     let tempdir = tempfile::tempdir().expect("tempdir should be created");
     let runtime_dir = tempdir.path().join("runtime");
     fs::create_dir(&runtime_dir).expect("runtime dir should be created");
@@ -99,7 +100,7 @@ fn worker_renders_cached_git_status_on_later_prompts() {
         .expect("worker should spawn");
 
     let mut request = open_fifo_write(runtime_dir.join("req"));
-    let mut response = open_fifo_read(runtime_dir.join("resp"));
+    let mut response = WorkerReader::new(open_fifo_read(runtime_dir.join("resp")));
 
     assert_eq!(
         read_worker_record(&mut response),
@@ -116,23 +117,13 @@ fn worker_renders_cached_git_status_on_later_prompts() {
         first_output.prompt
     );
 
-    for generation in 2..20 {
-        thread::sleep(Duration::from_millis(20));
-        write_render_request(&mut request, generation, repo.path().to_path_buf(), 160);
-        let output = read_prompt_output(&mut response, generation);
-        if output.prompt.contains("main") && output.prompt.contains("[+1]") {
-            drop(request);
-            drop(response);
-            assert_worker_exits(&mut child);
-            return;
-        }
-    }
+    let update_output = read_update_output(&mut response, 1);
+    assert!(update_output.prompt.contains("main"));
+    assert!(update_output.prompt.contains("[+1]"));
 
     drop(request);
     drop(response);
-    let _ = child.kill();
-    let _ = child.wait();
-    panic!("cached git status did not appear on later prompts");
+    assert_worker_exits(&mut child);
 }
 
 fn create_fifo(path: impl AsRef<Path>) {
@@ -160,7 +151,7 @@ fn write_render_request(request: &mut fs::File, generation: u64, cwd: PathBuf, c
 }
 
 fn read_prompt_output(
-    response: &mut fs::File,
+    response: &mut WorkerReader,
     expected_generation: u64,
 ) -> nova::render::LoweredPrompt {
     let WorkerRecord::Prompt {
@@ -170,6 +161,24 @@ fn read_prompt_output(
     } = read_worker_record(response)
     else {
         panic!("expected prompt response");
+    };
+
+    assert_eq!(generation, expected_generation);
+    assert_eq!(status, RenderStatus::Final);
+    output
+}
+
+fn read_update_output(
+    response: &mut WorkerReader,
+    expected_generation: u64,
+) -> nova::render::LoweredPrompt {
+    let WorkerRecord::Update {
+        generation,
+        status,
+        output,
+    } = read_worker_record(response)
+    else {
+        panic!("expected update response");
     };
 
     assert_eq!(generation, expected_generation);
@@ -195,18 +204,42 @@ fn open_fifo_read(path: impl AsRef<Path>) -> fs::File {
     })
 }
 
-fn read_worker_record(response: &mut fs::File) -> WorkerRecord {
-    let mut decoder = FrameDecoder::default();
+struct WorkerReader {
+    response: fs::File,
+    decoder: FrameDecoder,
+    pending: VecDeque<WorkerRecord>,
+}
+
+impl WorkerReader {
+    fn new(response: fs::File) -> Self {
+        Self {
+            response,
+            decoder: FrameDecoder::default(),
+            pending: VecDeque::new(),
+        }
+    }
+}
+
+fn read_worker_record(reader: &mut WorkerReader) -> WorkerRecord {
+    if let Some(record) = reader.pending.pop_front() {
+        return record;
+    }
+
     let deadline = Instant::now() + Duration::from_secs(2);
     let mut buffer = [0_u8; 1024];
 
     loop {
-        match response.read(&mut buffer) {
+        match reader.response.read(&mut buffer) {
             Ok(0) => {}
             Ok(bytes_read) => {
                 let chunk = String::from_utf8_lossy(&buffer[..bytes_read]);
-                if let Some(frame) = decoder.push(&chunk).into_iter().next() {
-                    return decode_worker_record(&frame).expect("worker record should decode");
+                for frame in reader.decoder.push(&chunk) {
+                    reader.pending.push_back(
+                        decode_worker_record(&frame).expect("worker record should decode"),
+                    );
+                }
+                if let Some(record) = reader.pending.pop_front() {
+                    return record;
                 }
             }
             Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {}

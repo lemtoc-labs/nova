@@ -6,7 +6,7 @@ fi
 typeset -g _NOVA_ZSH_LOADED=1
 
 zmodload zsh/datetime zsh/system zsh/zselect 2>/dev/null || true
-autoload -Uz add-zsh-hook
+autoload -Uz add-zsh-hook add-zle-hook-widget
 
 typeset -g _nova_bin=@NOVA_BIN@
 typeset -g _nova_cmd_start=
@@ -81,9 +81,7 @@ _nova_open_transport() {
     return 1
   }
 
-  if [[ -o interactive ]]; then
-    zle -F "$_nova_resp_fd" _nova_on_update 2>/dev/null || true
-  fi
+  _nova_register_update_handler
 
   zselect -t 5 -r "$_nova_resp_fd" >/dev/null 2>&1 || {
     _nova_close_fds
@@ -95,6 +93,13 @@ _nova_open_transport() {
     _nova_close_fds
     return 1
   }
+}
+
+_nova_register_update_handler() {
+  emulate -L zsh
+  [[ -n ${_nova_resp_fd:-} ]] || return 0
+  [[ -o interactive ]] || return 0
+  zle -F "$_nova_resp_fd" _nova_on_update 2>/dev/null || true
 }
 
 _nova_ensure_worker() {
@@ -188,14 +193,26 @@ _nova_fallback() {
 
 _nova_on_update() {
   emulate -L zsh
+  _nova_drain_and_redraw
+}
+
+_nova_drain_and_redraw() {
+  emulate -L zsh
   _nova_reply_applied=0
   _nova_drain || {
     _nova_mark_dead
     return 1
   }
-  if (( _nova_reply_applied )) && zle; then
-    zle reset-prompt
+  if (( _nova_reply_applied )); then
+    zle reset-prompt 2>/dev/null || true
   fi
+}
+
+_nova_zle_line_init() {
+  emulate -L zsh
+  _nova_register_update_handler
+  [[ -n ${_nova_resp_fd:-} ]] || return 0
+  _nova_drain_and_redraw
 }
 
 _nova_preexec() {
@@ -255,3 +272,4 @@ _nova_cleanup() {
 add-zsh-hook preexec _nova_preexec
 add-zsh-hook precmd _nova_precmd
 add-zsh-hook zshexit _nova_cleanup
+add-zle-hook-widget line-init _nova_zle_line_init 2>/dev/null || true
