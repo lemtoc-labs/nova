@@ -76,12 +76,105 @@ fn worker_renders_prompt_over_fifos() {
     assert_worker_exits(&mut child);
 }
 
+#[test]
+fn worker_renders_cached_git_status_on_later_prompts() {
+    let tempdir = tempfile::tempdir().expect("tempdir should be created");
+    let runtime_dir = tempdir.path().join("runtime");
+    fs::create_dir(&runtime_dir).expect("runtime dir should be created");
+    create_fifo(runtime_dir.join("req"));
+    create_fifo(runtime_dir.join("resp"));
+
+    let repo = tempfile::tempdir().expect("repo tempdir should be created");
+    init_git_repo(repo.path());
+    fs::write(repo.path().join("staged.txt"), "hello").expect("file should be written");
+    run_git(repo.path(), &["add", "staged.txt"]);
+
+    let mut child = StdCommand::new(cargo_bin("nova"))
+        .arg("worker")
+        .arg("--dir")
+        .arg(&runtime_dir)
+        .arg("--session-token")
+        .arg("test-token")
+        .spawn()
+        .expect("worker should spawn");
+
+    let mut request = open_fifo_write(runtime_dir.join("req"));
+    let mut response = open_fifo_read(runtime_dir.join("resp"));
+
+    assert_eq!(
+        read_worker_record(&mut response),
+        WorkerRecord::Handshake {
+            session_token: "test-token".to_string()
+        }
+    );
+
+    write_render_request(&mut request, 1, repo.path().to_path_buf(), 160);
+    let first_output = read_prompt_output(&mut response, 1);
+    assert!(
+        !first_output.prompt.contains("[+1]"),
+        "first render should not block on git status: {}",
+        first_output.prompt
+    );
+
+    for generation in 2..20 {
+        thread::sleep(Duration::from_millis(20));
+        write_render_request(&mut request, generation, repo.path().to_path_buf(), 160);
+        let output = read_prompt_output(&mut response, generation);
+        if output.prompt.contains("main") && output.prompt.contains("[+1]") {
+            drop(request);
+            drop(response);
+            assert_worker_exits(&mut child);
+            return;
+        }
+    }
+
+    drop(request);
+    drop(response);
+    let _ = child.kill();
+    let _ = child.wait();
+    panic!("cached git status did not appear on later prompts");
+}
+
 fn create_fifo(path: impl AsRef<Path>) {
     let status = StdCommand::new("mkfifo")
         .arg(path.as_ref())
         .status()
         .expect("mkfifo should run");
     assert!(status.success(), "mkfifo should succeed");
+}
+
+fn write_render_request(request: &mut fs::File, generation: u64, cwd: PathBuf, columns: u16) {
+    let request_record = ClientRecord::Render(RenderRequest {
+        generation,
+        state: PromptState {
+            cwd,
+            exit_status: 0,
+            duration_ms: None,
+            columns,
+            keymap: Keymap::Main,
+        },
+    });
+    request
+        .write_all(encode_client_record(&request_record).as_bytes())
+        .expect("request should be written");
+}
+
+fn read_prompt_output(
+    response: &mut fs::File,
+    expected_generation: u64,
+) -> nova::render::LoweredPrompt {
+    let WorkerRecord::Prompt {
+        generation,
+        status,
+        output,
+    } = read_worker_record(response)
+    else {
+        panic!("expected prompt response");
+    };
+
+    assert_eq!(generation, expected_generation);
+    assert_eq!(status, RenderStatus::Final);
+    output
 }
 
 fn open_fifo_write(path: impl AsRef<Path>) -> fs::File {
@@ -151,6 +244,35 @@ fn is_retryable_open_error(error: &std::io::Error) -> bool {
         error.kind(),
         std::io::ErrorKind::WouldBlock | std::io::ErrorKind::NotFound
     ) || error.raw_os_error() == Some(libc::ENXIO)
+}
+
+fn init_git_repo(path: &Path) {
+    let init = StdCommand::new("git")
+        .args(["init", "-b", "main"])
+        .current_dir(path)
+        .output()
+        .expect("git init should run");
+
+    if init.status.success() {
+        return;
+    }
+
+    run_git(path, &["init"]);
+    run_git(path, &["checkout", "-b", "main"]);
+}
+
+fn run_git(path: &Path, args: &[&str]) {
+    let output = StdCommand::new("git")
+        .args(args)
+        .current_dir(path)
+        .output()
+        .expect("git should run");
+    assert!(
+        output.status.success(),
+        "git {:?} failed: {}",
+        args,
+        String::from_utf8_lossy(&output.stderr)
+    );
 }
 
 fn assert_worker_exits(child: &mut std::process::Child) {

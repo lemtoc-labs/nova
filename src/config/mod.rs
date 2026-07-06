@@ -95,7 +95,11 @@ impl Default for LayoutConfig {
         Self {
             lines: 2,
             line1: LineConfig {
-                left: vec!["dir".to_string()],
+                left: vec![
+                    "dir".to_string(),
+                    "git_branch".to_string(),
+                    "git_status".to_string(),
+                ],
                 right: vec!["duration".to_string()],
             },
             line2: LineConfig {
@@ -115,7 +119,10 @@ mod tests {
         let config = Config::default();
 
         assert_eq!(config.layout.lines, 2);
-        assert_eq!(config.layout.line1.left, ["dir"]);
+        assert_eq!(
+            config.layout.line1.left,
+            ["dir", "git_branch", "git_status"]
+        );
         assert_eq!(config.layout.line1.right, ["duration"]);
         assert_eq!(config.layout.line2.left, ["exit_status", "prompt_char"]);
     }
