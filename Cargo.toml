@@ -20,3 +20,7 @@ insta = "1"
 predicates = "3"
 proptest = "1"
 tempfile = "3"
+
+[[bench]]
+name = "render"
+harness = false
