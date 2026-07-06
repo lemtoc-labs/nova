@@ -204,6 +204,135 @@ fn worker_sends_update_when_rust_version_finishes() {
     assert_worker_exits(&mut child);
 }
 
+#[test]
+fn worker_keeps_stale_git_status_after_refresh_failure() {
+    let tempdir = tempfile::tempdir().expect("tempdir should be created");
+    let runtime_dir = tempdir.path().join("runtime");
+    fs::create_dir(&runtime_dir).expect("runtime dir should be created");
+    create_fifo(runtime_dir.join("req"));
+    create_fifo(runtime_dir.join("resp"));
+
+    let repo = tempdir.path().join("repo");
+    fs::create_dir(&repo).expect("repo dir should be created");
+
+    let config_path = tempdir.path().join("nova.toml");
+    fs::write(
+        &config_path,
+        r#"
+        [layout]
+        lines = 2
+
+        [layout.line1]
+        left = ["dir", "git_branch", "git_status"]
+        right = []
+
+        [layout.line2]
+        left = ["prompt_char"]
+        right = []
+
+        [segments.git_status]
+        ttl_ms = 0
+        "#,
+    )
+    .expect("config should be written");
+
+    let bin_dir = tempdir.path().join("bin");
+    fs::create_dir(&bin_dir).expect("bin dir should be created");
+    let count_path = tempdir.path().join("git-count");
+    write_script(
+        &bin_dir,
+        "git",
+        &format!(
+            r#"
+count_file='{}'
+count="$(cat "$count_file" 2>/dev/null || printf 0)"
+count=$((count + 1))
+printf '%s' "$count" > "$count_file"
+
+if [ "$count" -eq 1 ]; then
+  printf '%s\0%s\0%s\0' '# branch.oid abcdef0123456789' '# branch.head main' '1 A. staged.txt'
+  exit 0
+fi
+
+exit 1
+"#,
+            count_path.to_string_lossy()
+        ),
+    );
+
+    let path = format!(
+        "{}:{}",
+        bin_dir.to_string_lossy(),
+        env::var("PATH").unwrap_or_default()
+    );
+    let mut child = StdCommand::new(cargo_bin("nova"))
+        .arg("worker")
+        .arg("--dir")
+        .arg(&runtime_dir)
+        .arg("--session-token")
+        .arg("test-token")
+        .env("NOVA_CONFIG", &config_path)
+        .env("PATH", path)
+        .spawn()
+        .expect("worker should spawn");
+
+    let mut request = open_fifo_write(runtime_dir.join("req"));
+    let mut response = WorkerReader::new(open_fifo_read(runtime_dir.join("resp")));
+
+    assert_eq!(
+        read_worker_record(&mut response),
+        WorkerRecord::Handshake {
+            session_token: "test-token".to_string()
+        }
+    );
+
+    write_render_request(&mut request, 1, repo.clone(), 160);
+    let first_output = read_prompt_output(&mut response, 1);
+    assert!(
+        !first_output.prompt.contains("[+1]"),
+        "first render should not block on git status: {}",
+        first_output.prompt
+    );
+
+    let update_output = read_update_output(&mut response, 1);
+    assert!(update_output.prompt.contains("main"));
+    assert!(update_output.prompt.contains("[+1]"));
+
+    write_render_request(&mut request, 2, repo.clone(), 160);
+    let cached_output = read_prompt_output(&mut response, 2);
+    assert!(
+        cached_output.prompt.contains("main"),
+        "cache-hit prompt should keep stale branch: {}",
+        cached_output.prompt
+    );
+    assert!(
+        cached_output.prompt.contains("[+1]"),
+        "cache-hit prompt should keep stale git status: {}",
+        cached_output.prompt
+    );
+
+    wait_until(Duration::from_secs(2), || {
+        fs::read_to_string(&count_path).is_ok_and(|count| count == "2")
+    });
+
+    write_render_request(&mut request, 3, repo, 160);
+    let stale_output = read_prompt_output(&mut response, 3);
+    assert!(
+        stale_output.prompt.contains("main"),
+        "failed refresh should not clear stale branch: {}",
+        stale_output.prompt
+    );
+    assert!(
+        stale_output.prompt.contains("[+1]"),
+        "failed refresh should not clear stale git status: {}",
+        stale_output.prompt
+    );
+
+    drop(request);
+    drop(response);
+    assert_worker_exits(&mut child);
+}
+
 fn create_fifo(path: impl AsRef<Path>) {
     let status = StdCommand::new("mkfifo")
         .arg(path.as_ref())
@@ -348,6 +477,22 @@ where
         assert!(Instant::now() < deadline, "timed out waiting for FIFO");
         thread::sleep(Duration::from_millis(10));
     }
+}
+
+fn wait_until<F>(timeout: Duration, mut condition: F)
+where
+    F: FnMut() -> bool,
+{
+    let deadline = Instant::now() + timeout;
+
+    while Instant::now() < deadline {
+        if condition() {
+            return;
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+
+    assert!(condition(), "condition was not met before timeout");
 }
 
 fn is_retryable_open_error(error: &std::io::Error) -> bool {
