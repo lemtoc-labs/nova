@@ -1,5 +1,26 @@
 //! Git branch and status collectors.
 
+use std::io::Read;
+use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
+use std::thread::{self, JoinHandle};
+use std::time::{Duration, Instant};
+
+use thiserror::Error;
+use wait_timeout::ChildExt;
+
+use crate::cache::CacheKey;
+
+const GIT_STATUS_SEGMENT_ID: &str = "git_status";
+const GIT_STATUS_ARGS: &[&str] = &[
+    "--no-optional-locks",
+    "status",
+    "--porcelain=v2",
+    "--branch",
+    "--show-stash",
+    "-z",
+];
+
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct GitStatus {
     pub branch: Option<String>,
@@ -23,6 +44,114 @@ impl GitStatus {
             || self.ahead > 0
             || self.behind > 0
     }
+}
+
+#[derive(Debug, Error)]
+pub enum GitCollectError {
+    #[error("git status timed out")]
+    TimedOut,
+    #[error("failed to spawn git status: {0}")]
+    Spawn(std::io::Error),
+    #[error("failed to wait for git status: {0}")]
+    Wait(std::io::Error),
+    #[error("failed to read git status output: {0}")]
+    ReadOutput(std::io::Error),
+    #[error("git status output reader panicked")]
+    ReaderPanicked,
+    #[error("failed to capture git status output")]
+    MissingStdout,
+}
+
+pub fn git_cache_key(cwd: &Path, config_generation: u64) -> Option<CacheKey> {
+    let root = find_repository_root(cwd)?;
+    Some(CacheKey::new(
+        GIT_STATUS_SEGMENT_ID,
+        root.to_string_lossy(),
+        config_generation,
+    ))
+}
+
+pub fn find_repository_root(cwd: &Path) -> Option<PathBuf> {
+    let mut current = cwd;
+
+    loop {
+        let marker = current.join(".git");
+        if marker.is_dir() || marker.is_file() {
+            return Some(current.to_path_buf());
+        }
+
+        current = current.parent()?;
+    }
+}
+
+pub fn collect_git_status(
+    cwd: &Path,
+    deadline: Instant,
+) -> Result<Option<GitStatus>, GitCollectError> {
+    collect_git_status_with_command(cwd, deadline, Path::new("git"))
+}
+
+fn collect_git_status_with_command(
+    cwd: &Path,
+    deadline: Instant,
+    command: &Path,
+) -> Result<Option<GitStatus>, GitCollectError> {
+    let timeout = remaining_time(deadline)?;
+    let mut child = Command::new(command)
+        .args(GIT_STATUS_ARGS)
+        .current_dir(cwd)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(GitCollectError::Spawn)?;
+    let stdout = child.stdout.take().ok_or(GitCollectError::MissingStdout)?;
+    let stdout_reader = read_stdout(stdout);
+
+    let status = match child.wait_timeout(timeout).map_err(GitCollectError::Wait)? {
+        Some(status) => status,
+        None => {
+            let _ = child.kill();
+            let _ = child.wait();
+            let _ = stdout_reader.join();
+            return Err(GitCollectError::TimedOut);
+        }
+    };
+    let output = join_stdout(stdout_reader)?;
+
+    if !status.success() {
+        return Ok(None);
+    }
+
+    Ok(Some(parse_porcelain_v2_z(&output)))
+}
+
+fn remaining_time(deadline: Instant) -> Result<Duration, GitCollectError> {
+    let remaining = deadline
+        .checked_duration_since(Instant::now())
+        .ok_or(GitCollectError::TimedOut)?;
+
+    if remaining.is_zero() {
+        Err(GitCollectError::TimedOut)
+    } else {
+        Ok(remaining)
+    }
+}
+
+fn read_stdout(mut stdout: std::process::ChildStdout) -> JoinHandle<std::io::Result<Vec<u8>>> {
+    thread::spawn(move || {
+        let mut output = Vec::new();
+        stdout.read_to_end(&mut output)?;
+        Ok(output)
+    })
+}
+
+fn join_stdout(
+    stdout_reader: JoinHandle<std::io::Result<Vec<u8>>>,
+) -> Result<Vec<u8>, GitCollectError> {
+    stdout_reader
+        .join()
+        .map_err(|_panic| GitCollectError::ReaderPanicked)?
+        .map_err(GitCollectError::ReadOutput)
 }
 
 pub fn parse_porcelain_v2_z(output: &[u8]) -> GitStatus {
@@ -105,8 +234,43 @@ fn parse_changed_entry(record: &str, status: &mut GitStatus) {
 mod tests {
     use std::path::Path;
     use std::process::Command;
+    use std::time::Duration;
 
     use super::*;
+
+    #[test]
+    fn builds_cache_key_from_repository_root() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempfile::tempdir()?;
+        init_repo(dir.path())?;
+        let nested = dir.path().join("src").join("deep");
+        std::fs::create_dir_all(&nested)?;
+
+        let key = git_cache_key(&nested, 4).expect("repo root should be detected");
+
+        assert_eq!(key.segment_id, "git_status");
+        assert_eq!(key.source, dir.path().to_string_lossy());
+        assert_eq!(key.config_generation, 4);
+        Ok(())
+    }
+
+    #[test]
+    fn accepts_git_file_markers_for_worktrees() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempfile::tempdir()?;
+        let worktree = dir.path().join("worktree");
+        std::fs::create_dir(&worktree)?;
+        std::fs::write(worktree.join(".git"), "gitdir: ../actual-gitdir\n")?;
+
+        assert_eq!(find_repository_root(&worktree), Some(worktree));
+        Ok(())
+    }
+
+    #[test]
+    fn cache_key_is_none_outside_repository() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempfile::tempdir()?;
+
+        assert_eq!(git_cache_key(dir.path(), 1), None);
+        Ok(())
+    }
 
     #[test]
     fn parses_branch_and_counts_from_porcelain_v2_z() {
@@ -220,6 +384,55 @@ u UU N... 000000 000000 000000 100644 100644 100644 abc123 def456 ghi789 conflic
         assert!(status.branch.is_some(), "branch should be reported");
         assert_eq!(status.staged, 1);
         assert!(status.has_changes());
+        Ok(())
+    }
+
+    #[test]
+    fn collects_real_git_status_with_staged_file() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempfile::tempdir()?;
+        init_repo(dir.path())?;
+        std::fs::write(dir.path().join("staged.txt"), "hello")?;
+        run_git(dir.path(), &["add", "staged.txt"])?;
+
+        let status = collect_git_status(dir.path(), Instant::now() + Duration::from_secs(5))?
+            .expect("git repo should produce status");
+
+        assert!(status.branch.is_some(), "branch should be reported");
+        assert_eq!(status.staged, 1);
+        assert!(status.has_changes());
+        Ok(())
+    }
+
+    #[test]
+    fn collector_returns_none_outside_repository() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempfile::tempdir()?;
+
+        let status = collect_git_status(dir.path(), Instant::now() + Duration::from_secs(5))?;
+
+        assert_eq!(status, None);
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn collector_times_out_slow_git_command() -> Result<(), Box<dyn std::error::Error>> {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir()?;
+        let fake_git = dir.path().join("git");
+        std::fs::write(&fake_git, "#!/bin/sh\nsleep 2\n")?;
+        let mut permissions = std::fs::metadata(&fake_git)?.permissions();
+        permissions.set_mode(0o755);
+        std::fs::set_permissions(&fake_git, permissions)?;
+
+        let error = collect_git_status_with_command(
+            dir.path(),
+            Instant::now() + Duration::from_millis(50),
+            &fake_git,
+        )
+        .expect_err("slow git command should time out");
+
+        assert!(matches!(error, GitCollectError::TimedOut));
         Ok(())
     }
 
