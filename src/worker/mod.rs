@@ -3,6 +3,7 @@
 pub mod jobs;
 pub mod protocol;
 
+use std::collections::BTreeSet;
 use std::fs::OpenOptions;
 use std::io::{Read, Write};
 use std::os::unix::fs::OpenOptionsExt;
@@ -13,6 +14,7 @@ use std::time::{Duration, Instant};
 use thiserror::Error;
 
 use crate::cache::{AsyncValue, CacheKey, SegmentCache};
+use crate::config::error::ConfigWarning;
 use crate::config::load::load_config;
 use crate::config::{Config, SegmentConfig};
 use crate::render::{AsyncSegmentValues, LoweredPrompt, render_with_async};
@@ -94,6 +96,7 @@ pub fn run(options: WorkerOptions) -> Result<(), WorkerError> {
     let mut active_prompt = None;
     let mut config_state = ConfigState::default();
     let mut warned_config_error = false;
+    let mut warned_config_warnings = BTreeSet::new();
 
     loop {
         drain_job_results(
@@ -111,8 +114,11 @@ pub fn run(options: WorkerOptions) -> Result<(), WorkerError> {
                     let Ok(ClientRecord::Render(request)) = decode_client_record(&frame) else {
                         continue;
                     };
-                    let worker_config =
-                        load_worker_config(&mut config_state, &mut warned_config_error);
+                    let worker_config = load_worker_config(
+                        &mut config_state,
+                        &mut warned_config_error,
+                        &mut warned_config_warnings,
+                    );
                     let config = worker_config.config;
                     let async_values = async_values(
                         &cache,
@@ -302,6 +308,7 @@ fn complete_segment(
 fn load_worker_config(
     config_state: &mut ConfigState,
     warned_config_error: &mut bool,
+    warned_config_warnings: &mut BTreeSet<ConfigWarning>,
 ) -> WorkerConfig {
     let config = load_config(None).unwrap_or_else(|error| {
         if !*warned_config_error {
@@ -310,6 +317,7 @@ fn load_worker_config(
         }
         Config::default()
     });
+    warn_config_warnings(&config, warned_config_warnings);
 
     if config != config_state.config {
         config_state.generation = config_state.generation.saturating_add(1);
@@ -319,6 +327,14 @@ fn load_worker_config(
     WorkerConfig {
         config: config_state.config.clone(),
         generation: config_state.generation,
+    }
+}
+
+fn warn_config_warnings(config: &Config, warned_config_warnings: &mut BTreeSet<ConfigWarning>) {
+    for warning in config.warnings() {
+        if warned_config_warnings.insert(warning.clone()) {
+            eprintln!("nova: warning: {warning}");
+        }
     }
 }
 

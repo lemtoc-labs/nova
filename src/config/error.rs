@@ -22,7 +22,7 @@ pub enum ConfigError {
     InvalidLayoutLines { lines: u8 },
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum ConfigWarning {
     UnknownLayoutSegment { location: String, segment: String },
 }
