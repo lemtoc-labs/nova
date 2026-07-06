@@ -93,6 +93,7 @@ pub fn run(options: WorkerOptions) -> Result<(), WorkerError> {
     let (job_results, job_result_receiver) = mpsc::channel::<JobResult<AsyncJobSegments>>();
     let job_pool = JobPool::new(MAX_CONCURRENCY, job_results);
     let mut active_prompt = None;
+    let mut warned_config_error = false;
 
     loop {
         drain_job_results(
@@ -110,7 +111,7 @@ pub fn run(options: WorkerOptions) -> Result<(), WorkerError> {
                     let Ok(ClientRecord::Render(request)) = decode_client_record(&frame) else {
                         continue;
                     };
-                    let config = load_config(None).unwrap_or_default();
+                    let config = load_worker_config(&mut warned_config_error);
                     let async_values = async_values(&cache, &request.state.cwd, &config);
                     let output = render_with_async(&config, &request.state, &async_values);
                     let status = render_status(&config, &async_values);
@@ -269,6 +270,16 @@ fn complete_segment(
     } else {
         cache.complete_failure(key, collected_at);
     }
+}
+
+fn load_worker_config(warned_config_error: &mut bool) -> Config {
+    load_config(None).unwrap_or_else(|error| {
+        if !*warned_config_error {
+            eprintln!("nova: {error}; using built-in defaults");
+            *warned_config_error = true;
+        }
+        Config::default()
+    })
 }
 
 fn async_values(

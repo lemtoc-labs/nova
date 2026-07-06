@@ -6,7 +6,7 @@ use std::fs::{self, OpenOptions};
 use std::io::{Read, Write};
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
-use std::process::Command as StdCommand;
+use std::process::{Command as StdCommand, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -430,6 +430,64 @@ exit 1
     drop(request);
     drop(response);
     assert_worker_exits(&mut child);
+}
+
+#[test]
+fn worker_warns_once_and_uses_defaults_for_invalid_config() {
+    let tempdir = tempfile::tempdir().expect("tempdir should be created");
+    let runtime_dir = tempdir.path().join("runtime");
+    fs::create_dir(&runtime_dir).expect("runtime dir should be created");
+    create_fifo(runtime_dir.join("req"));
+    create_fifo(runtime_dir.join("resp"));
+
+    let config_path = tempdir.path().join("nova.toml");
+    fs::write(&config_path, "[layout]\nlines = 3\n").expect("config should be written");
+
+    let mut child = StdCommand::new(cargo_bin("nova"))
+        .arg("worker")
+        .arg("--dir")
+        .arg(&runtime_dir)
+        .arg("--session-token")
+        .arg("test-token")
+        .env("NOVA_CONFIG", &config_path)
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("worker should spawn");
+
+    let mut request = open_fifo_write(runtime_dir.join("req"));
+    let mut response = WorkerReader::new(open_fifo_read(runtime_dir.join("resp")));
+
+    assert_eq!(
+        read_worker_record(&mut response),
+        WorkerRecord::Handshake {
+            session_token: "test-token".to_string()
+        }
+    );
+
+    write_render_request(&mut request, 1, PathBuf::from("/tmp/nova"), 160);
+    let first_output = read_prompt_response(&mut response, 1).1;
+    assert!(first_output.prompt.contains("/tmp/nova"));
+    assert!(first_output.prompt.contains("❯"));
+
+    write_render_request(&mut request, 2, PathBuf::from("/tmp/nova"), 160);
+    let second_output = read_prompt_response(&mut response, 2).1;
+    assert!(second_output.prompt.contains("/tmp/nova"));
+    assert!(second_output.prompt.contains("❯"));
+
+    drop(request);
+    drop(response);
+    assert_worker_exits(&mut child);
+
+    let mut stderr = String::new();
+    child
+        .stderr
+        .take()
+        .expect("stderr should be piped")
+        .read_to_string(&mut stderr)
+        .expect("stderr should be readable");
+    assert_eq!(stderr.matches("nova: invalid config").count(), 1);
+    assert!(stderr.contains("layout.lines must be 1 or 2"));
+    assert!(stderr.contains("using built-in defaults"));
 }
 
 fn create_fifo(path: impl AsRef<Path>) {
