@@ -513,7 +513,7 @@ icon = ""                     # set to "" to hide the icon
 
 [segments.git_status]
 ttl_ms = 0
-icons = { staged = "", conflicted = "", stash = "" }
+icons = { staged = "+", modified = "!", untracked = "?", stash = "$" } # "" hides an indicator
 
 [segments.rust_version]
 icon = ""                     # set to "" to hide the icon

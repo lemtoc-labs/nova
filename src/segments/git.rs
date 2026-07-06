@@ -73,7 +73,7 @@ fn git_branch_label(branch: &str, config: &SegmentConfig) -> String {
 }
 
 pub fn render_git_status(status: &GitStatus, config: &SegmentConfig) -> Option<SegmentContent> {
-    let text = format_git_indicators(status)?;
+    let text = format_git_indicators(status, config)?;
     Some(SegmentContent::new(
         GIT_STATUS_SEGMENT_ID,
         text,
@@ -275,15 +275,43 @@ fn short_oid(oid: &str) -> &str {
     &oid[..oid.len().min(DETACHED_OID_PREFIX_LEN)]
 }
 
-fn format_git_indicators(status: &GitStatus) -> Option<String> {
+fn format_git_indicators(status: &GitStatus, config: &SegmentConfig) -> Option<String> {
     let mut indicators = Vec::new();
-    push_indicator(&mut indicators, "=", status.conflicted);
-    push_indicator(&mut indicators, "!", status.modified);
-    push_indicator(&mut indicators, "+", status.staged);
-    push_indicator(&mut indicators, "?", status.untracked);
-    push_indicator(&mut indicators, "$", status.stashed);
-    push_indicator(&mut indicators, "⇡", status.ahead);
-    push_indicator(&mut indicators, "⇣", status.behind);
+    push_indicator(
+        &mut indicators,
+        git_status_icon(config, "conflicted", "="),
+        status.conflicted,
+    );
+    push_indicator(
+        &mut indicators,
+        git_status_icon(config, "modified", "!"),
+        status.modified,
+    );
+    push_indicator(
+        &mut indicators,
+        git_status_icon(config, "staged", "+"),
+        status.staged,
+    );
+    push_indicator(
+        &mut indicators,
+        git_status_icon(config, "untracked", "?"),
+        status.untracked,
+    );
+    push_indicator(
+        &mut indicators,
+        git_status_icon(config, "stash", "$"),
+        status.stashed,
+    );
+    push_indicator(
+        &mut indicators,
+        git_status_icon(config, "ahead", "⇡"),
+        status.ahead,
+    );
+    push_indicator(
+        &mut indicators,
+        git_status_icon(config, "behind", "⇣"),
+        status.behind,
+    );
 
     if indicators.is_empty() {
         None
@@ -292,8 +320,18 @@ fn format_git_indicators(status: &GitStatus) -> Option<String> {
     }
 }
 
-fn push_indicator(indicators: &mut Vec<String>, symbol: &str, count: usize) {
-    if count > 0 {
+fn git_status_icon<'a>(config: &'a SegmentConfig, name: &str, default: &'a str) -> Option<&'a str> {
+    match config.icons.get(name).map(String::as_str) {
+        Some("") => None,
+        Some(icon) => Some(icon),
+        None => Some(default),
+    }
+}
+
+fn push_indicator(indicators: &mut Vec<String>, symbol: Option<&str>, count: usize) {
+    if count > 0
+        && let Some(symbol) = symbol
+    {
         indicators.push(format!("{symbol}{count}"));
     }
 }
@@ -425,6 +463,47 @@ mod tests {
         assert_eq!(rendered.text, "[=4 !1 +2 ?3 $5 ⇡6 ⇣7]");
         assert_eq!(rendered.style.fg.as_deref(), Some("red"));
         assert!(rendered.style.bold);
+    }
+
+    #[test]
+    fn renders_status_indicators_with_configured_icons() {
+        let status = GitStatus {
+            staged: 2,
+            modified: 1,
+            untracked: 3,
+            stashed: 4,
+            ..GitStatus::default()
+        };
+        let config = SegmentConfig {
+            icons: [
+                ("staged".to_string(), "S".to_string()),
+                ("untracked".to_string(), "U".to_string()),
+                ("stash".to_string(), "T".to_string()),
+            ]
+            .into(),
+            ..SegmentConfig::default()
+        };
+
+        let rendered = render_git_status(&status, &config).expect("dirty status should render");
+
+        assert_eq!(rendered.text, "[!1 S2 U3 T4]");
+    }
+
+    #[test]
+    fn hides_status_indicators_with_empty_configured_icons() {
+        let status = GitStatus {
+            staged: 2,
+            modified: 1,
+            ..GitStatus::default()
+        };
+        let config = SegmentConfig {
+            icons: [("staged".to_string(), String::new())].into(),
+            ..SegmentConfig::default()
+        };
+
+        let rendered = render_git_status(&status, &config).expect("dirty status should render");
+
+        assert_eq!(rendered.text, "[!1]");
     }
 
     #[test]

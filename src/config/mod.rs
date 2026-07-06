@@ -37,6 +37,7 @@ pub struct LineConfig {
 #[serde(default)]
 pub struct SegmentConfig {
     pub icon: Option<String>,
+    pub icons: BTreeMap<String, String>,
     pub max_components: Option<usize>,
     pub min_ms: Option<u64>,
     pub ttl_ms: Option<u64>,
@@ -148,11 +149,15 @@ mod tests {
             ttl_ms = 5000
             timeout_ms = 1234
             style = { fg = "blue", bold = true }
+
+            [segments.git_status]
+            icons = { staged = "S", untracked = "U", stash = "T" }
             "#,
         )
         .expect("config should parse");
 
         let dir = config.segment("dir");
+        let git_status = config.segment("git_status");
         assert_eq!(config.layout.lines, 1);
         assert_eq!(dir.icon.as_deref(), Some("d"));
         assert_eq!(dir.max_components, Some(2));
@@ -160,6 +165,15 @@ mod tests {
         assert_eq!(dir.timeout_ms, Some(1_234));
         assert_eq!(dir.style.fg.as_deref(), Some("blue"));
         assert!(dir.style.bold);
+        assert_eq!(
+            git_status.icons.get("staged").map(String::as_str),
+            Some("S")
+        );
+        assert_eq!(
+            git_status.icons.get("untracked").map(String::as_str),
+            Some("U")
+        );
+        assert_eq!(git_status.icons.get("stash").map(String::as_str), Some("T"));
     }
 
     #[test]
