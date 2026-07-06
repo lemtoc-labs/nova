@@ -36,6 +36,7 @@ pub struct LineConfig {
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Eq)]
 #[serde(default)]
 pub struct SegmentConfig {
+    pub icon: Option<String>,
     pub max_components: Option<usize>,
     pub min_ms: Option<u64>,
     pub ttl_ms: Option<u64>,
@@ -142,6 +143,7 @@ mod tests {
             right = []
 
             [segments.dir]
+            icon = "d"
             max_components = 2
             ttl_ms = 5000
             timeout_ms = 1234
@@ -152,6 +154,7 @@ mod tests {
 
         let dir = config.segment("dir");
         assert_eq!(config.layout.lines, 1);
+        assert_eq!(dir.icon.as_deref(), Some("d"));
         assert_eq!(dir.max_components, Some(2));
         assert_eq!(dir.ttl_ms, Some(5_000));
         assert_eq!(dir.timeout_ms, Some(1_234));

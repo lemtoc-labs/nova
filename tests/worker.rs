@@ -193,14 +193,14 @@ fn worker_sends_update_when_rust_version_finishes() {
     let (first_status, first_output) = read_prompt_response(&mut response, 1);
     assert_eq!(first_status, RenderStatus::Partial);
     assert!(
-        !first_output.prompt.contains("rust 1.96.1"),
+        !first_output.prompt.contains("1.96.1"),
         "first render should not block on rust version: {}",
         first_output.prompt
     );
 
     let (update_status, update_output) = read_update_response(&mut response, 1);
     assert_eq!(update_status, RenderStatus::Final);
-    assert!(update_output.prompt.contains("rust 1.96.1"));
+    assert!(update_output.prompt.contains(" 1.96.1"));
 
     drop(request);
     drop(response);

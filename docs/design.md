@@ -513,6 +513,7 @@ ttl_ms = 0
 icons = { staged = "", conflicted = "", stash = "" }
 
 [segments.rust_version]
+icon = ""                     # set to "" to hide the icon
 ttl_ms = 300000
 timeout_ms = 1000
 

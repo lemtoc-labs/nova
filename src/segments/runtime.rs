@@ -14,6 +14,7 @@ use crate::config::SegmentConfig;
 use crate::segments::{SegmentContent, Style};
 
 const RUST_VERSION_SEGMENT_ID: &str = "rust_version";
+const RUST_VERSION_ICON: &str = "";
 const RUSTC_ARGS: &[&str] = &["--version"];
 const RUST_MARKERS: &[&str] = &["Cargo.toml", "rust-toolchain", "rust-toolchain.toml"];
 
@@ -122,9 +123,17 @@ pub fn render_rust_version(version: &str, config: &SegmentConfig) -> Option<Segm
 
     Some(SegmentContent::new(
         RUST_VERSION_SEGMENT_ID,
-        format!("rust {version}"),
+        rust_version_label(version, config),
         rust_style(config),
     ))
+}
+
+fn rust_version_label(version: &str, config: &SegmentConfig) -> String {
+    match config.icon.as_deref() {
+        Some("") => version.to_string(),
+        Some(icon) => format!("{icon} {version}"),
+        None => format!("{RUST_VERSION_ICON} {version}"),
+    }
 }
 
 fn remaining_time(deadline: Instant) -> Result<Duration, RuntimeCollectError> {
@@ -217,9 +226,37 @@ mod tests {
             .expect("version should render");
 
         assert_eq!(segment.id, "rust_version");
-        assert_eq!(segment.text, "rust 1.96.1");
+        assert_eq!(segment.text, " 1.96.1");
         assert_eq!(segment.style.fg.as_deref(), Some("cyan"));
         assert!(segment.style.bold);
+    }
+
+    #[test]
+    fn renders_rust_version_with_configured_icon() {
+        let segment = render_rust_version(
+            "1.96.1",
+            &SegmentConfig {
+                icon: Some("rust".to_string()),
+                ..SegmentConfig::default()
+            },
+        )
+        .expect("version should render");
+
+        assert_eq!(segment.text, "rust 1.96.1");
+    }
+
+    #[test]
+    fn renders_rust_version_without_icon_when_configured_empty() {
+        let segment = render_rust_version(
+            "1.96.1",
+            &SegmentConfig {
+                icon: Some(String::new()),
+                ..SegmentConfig::default()
+            },
+        )
+        .expect("version should render");
+
+        assert_eq!(segment.text, "1.96.1");
     }
 
     #[test]
