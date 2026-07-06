@@ -278,24 +278,23 @@ fn async_values(
     let mut values = AsyncSegmentValues::new();
 
     if config_uses_any_segment(config, &["git_branch", "git_status"]) {
+        let ttl = segment_ttl(&config.segment("git_status"), GIT_REFRESH_TTL);
         let status_key = git_status_key(cwd);
         let branch_key = git_branch_key_from_status_key(&status_key);
         values.insert(
             "git_branch".to_string(),
-            cache.lookup(&branch_key, now, GIT_REFRESH_TTL),
+            cache.lookup(&branch_key, now, ttl),
         );
         values.insert(
             "git_status".to_string(),
-            cache.lookup(&status_key, now, GIT_REFRESH_TTL),
+            cache.lookup(&status_key, now, ttl),
         );
     }
 
     if config_uses_segment(config, "rust_version") {
+        let ttl = segment_ttl(&config.segment("rust_version"), RUNTIME_REFRESH_TTL);
         let key = rust_version_key(cwd);
-        values.insert(
-            "rust_version".to_string(),
-            cache.lookup(&key, now, RUNTIME_REFRESH_TTL),
-        );
+        values.insert("rust_version".to_string(), cache.lookup(&key, now, ttl));
     }
 
     values
@@ -324,7 +323,9 @@ fn schedule_git_refresh(
     }
 
     let status_key = git_status_key(&cwd);
-    if !cache.needs_refresh(&status_key, Instant::now(), GIT_REFRESH_TTL) {
+    let status_config = config.segment("git_status");
+    let ttl = segment_ttl(&status_config, GIT_REFRESH_TTL);
+    if !cache.needs_refresh(&status_key, Instant::now(), ttl) {
         return;
     }
 
@@ -333,7 +334,6 @@ fn schedule_git_refresh(
     let job_status_key = status_key.clone();
     let job_branch_key = branch_key.clone();
     let branch_config = config.segment("git_branch");
-    let status_config = config.segment("git_status");
     let timeout = segment_timeout(&status_config, GIT_TIMEOUT);
     let spawn_result = pool.spawn(generation, status_key.clone(), timeout, move |deadline| {
         let Ok(Some(status)) = collect_git_status(&cwd, deadline) else {
@@ -382,12 +382,13 @@ fn schedule_rust_refresh(
     }
 
     let key = rust_version_key(&cwd);
-    if !cache.needs_refresh(&key, Instant::now(), RUNTIME_REFRESH_TTL) {
+    let rust_config = config.segment("rust_version");
+    let ttl = segment_ttl(&rust_config, RUNTIME_REFRESH_TTL);
+    if !cache.needs_refresh(&key, Instant::now(), ttl) {
         return;
     }
 
     cache.mark_inflight(key.clone());
-    let rust_config = config.segment("rust_version");
     let timeout = segment_timeout(&rust_config, RUNTIME_TIMEOUT);
     let job_key = key.clone();
     let spawn_result = pool.spawn(generation, key.clone(), timeout, move |deadline| {
@@ -453,6 +454,10 @@ fn segment_timeout(config: &SegmentConfig, default: Duration) -> Duration {
         .unwrap_or(default)
 }
 
+fn segment_ttl(config: &SegmentConfig, default: Duration) -> Duration {
+    config.ttl_ms.map(Duration::from_millis).unwrap_or(default)
+}
+
 fn write_record<W>(writer: &mut W, record: &WorkerRecord) -> Result<(), WorkerError>
 where
     W: Write,
@@ -491,5 +496,28 @@ mod tests {
             segment_timeout(&config, Duration::from_secs(1)),
             Duration::from_secs(1)
         );
+    }
+
+    #[test]
+    fn segment_ttl_uses_configured_milliseconds() {
+        let config = SegmentConfig {
+            ttl_ms: Some(2_500),
+            ..SegmentConfig::default()
+        };
+
+        assert_eq!(
+            segment_ttl(&config, Duration::from_secs(1)),
+            Duration::from_millis(2_500)
+        );
+    }
+
+    #[test]
+    fn segment_ttl_allows_zero_overrides() {
+        let config = SegmentConfig {
+            ttl_ms: Some(0),
+            ..SegmentConfig::default()
+        };
+
+        assert_eq!(segment_ttl(&config, Duration::from_secs(1)), Duration::ZERO);
     }
 }

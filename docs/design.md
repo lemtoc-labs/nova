@@ -497,6 +497,7 @@ left  = ["prompt_char"]
 [async]
 max_concurrency = 2
 timeout_ms = 1000               # per-segment override: [segments.<id>] timeout_ms
+ttl_ms = 300000                 # per-segment override: [segments.<id>] ttl_ms
 
 [segments.dir]
 max_components = 4
@@ -507,6 +508,7 @@ ttl_ms = 0
 icons = { staged = "", conflicted = "", stash = "" }
 
 [segments.rust_version]
+ttl_ms = 300000
 timeout_ms = 1000
 
 [segments.duration]
