@@ -21,11 +21,11 @@ const RUST_VERSION_ICON: &str = "";
 const RUSTC_ARGS: &[&str] = &["--version"];
 const RUST_MARKERS: &[&str] = &["Cargo.toml", "rust-toolchain", "rust-toolchain.toml"];
 const BUN_VERSION_SEGMENT_ID: &str = "bun_version";
-const BUN_VERSION_ICON: &str = "🥟";
+const BUN_VERSION_ICON: &str = "";
 const BUN_ARGS: &[&str] = &["--version"];
 const BUN_DETECT_FILES: &[&str] = &["bun.lock", "bun.lockb", "bunfig.toml"];
 const DENO_VERSION_SEGMENT_ID: &str = "deno_version";
-const DENO_VERSION_ICON: &str = "🦕";
+const DENO_VERSION_ICON: &str = "";
 const DENO_ARGS: &[&str] = &["-V"];
 const DENO_DETECT_FILES: &[&str] = &[
     "deno.json",
@@ -37,7 +37,7 @@ const DENO_DETECT_FILES: &[&str] = &[
     "deps.js",
 ];
 const PYTHON_VERSION_SEGMENT_ID: &str = "python_version";
-const PYTHON_VERSION_ICON: &str = "🐍";
+const PYTHON_VERSION_ICON: &str = "";
 const PYTHON_ARGS: &[&str] = &["--version"];
 const PYTHON_COMMANDS: &[&str] = &["python", "python3", "python2"];
 const PYTHON_DETECT_EXTENSIONS: &[&str] = &["py", "ipynb"];
@@ -51,7 +51,7 @@ const PYTHON_DETECT_FILES: &[&str] = &[
     "__init__.py",
 ];
 const NIX_SHELL_SEGMENT_ID: &str = "nix_shell";
-const NIX_SHELL_ICON: &str = "❄️";
+const NIX_SHELL_ICON: &str = "";
 const AWS_SEGMENT_ID: &str = "aws";
 const AWS_ICON: &str = "";
 const NODE_VERSION_SEGMENT_ID: &str = "node_version";
@@ -1259,7 +1259,7 @@ mod tests {
             render_bun_version("1.2.18", &SegmentConfig::default()).expect("version should render");
 
         assert_eq!(segment.id, "bun_version");
-        assert_eq!(segment.text, "🥟 1.2.18");
+        assert_eq!(segment.text, " 1.2.18");
         assert_eq!(segment.style.fg.as_deref(), Some("red"));
         assert!(segment.style.bold);
     }
@@ -1284,7 +1284,7 @@ mod tests {
             render_deno_version("2.3.6", &SegmentConfig::default()).expect("version should render");
 
         assert_eq!(segment.id, "deno_version");
-        assert_eq!(segment.text, "🦕 2.3.6");
+        assert_eq!(segment.text, " 2.3.6");
         assert_eq!(segment.style.fg.as_deref(), Some("green"));
         assert!(segment.style.bold);
     }
@@ -1309,7 +1309,7 @@ mod tests {
             .expect("version should render");
 
         assert_eq!(segment.id, "python_version");
-        assert_eq!(segment.text, "🐍 3.12.4");
+        assert_eq!(segment.text, " 3.12.4");
         assert_eq!(segment.style.fg.as_deref(), Some("yellow"));
         assert!(segment.style.bold);
     }
@@ -1340,7 +1340,7 @@ mod tests {
         .expect("nix shell should render");
 
         assert_eq!(segment.id, "nix_shell");
-        assert_eq!(segment.text, "❄️ pure");
+        assert_eq!(segment.text, " pure");
         assert_eq!(segment.style.fg.as_deref(), Some("blue"));
         assert!(segment.style.bold);
     }
@@ -1357,7 +1357,7 @@ mod tests {
         )
         .expect("nix shell should render");
 
-        assert_eq!(segment.text, "❄️ impure (starship)");
+        assert_eq!(segment.text, " impure (starship)");
     }
 
     #[test]

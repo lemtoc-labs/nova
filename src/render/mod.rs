@@ -449,7 +449,7 @@ mod tests {
             segments: Default::default(),
         };
 
-        assert!(render(&config, &state).prompt.contains("❄️ pure"));
+        assert!(render(&config, &state).prompt.contains(" pure"));
     }
 
     proptest! {

@@ -371,7 +371,7 @@ fn worker_sends_update_when_python_version_finishes() {
 
     let (update_status, update_output) = read_update_response(&mut response, 1);
     assert_eq!(update_status, RenderStatus::Final);
-    assert!(update_output.prompt.contains("🐍 3.12.4"));
+    assert!(update_output.prompt.contains(" 3.12.4"));
 
     drop(request);
     drop(response);
@@ -453,7 +453,7 @@ fn worker_sends_update_when_python_virtual_env_finishes() {
 
     let (update_status, update_output) = read_update_response(&mut response, 1);
     assert_eq!(update_status, RenderStatus::Final);
-    assert!(update_output.prompt.contains("🐍 3.12.4"));
+    assert!(update_output.prompt.contains(" 3.12.4"));
 
     drop(request);
     drop(response);
@@ -534,7 +534,7 @@ fn worker_sends_update_when_bun_version_finishes_and_omits_node_version() {
 
     let (update_status, update_output) = read_update_response(&mut response, 1);
     assert_eq!(update_status, RenderStatus::Final);
-    assert!(update_output.prompt.contains("🥟 1.2.18"));
+    assert!(update_output.prompt.contains(" 1.2.18"));
     assert!(
         !update_output.prompt.contains("22.17.0"),
         "bun marker should suppress node_version: {}",
@@ -620,7 +620,7 @@ fn worker_sends_update_when_deno_version_finishes_and_omits_node_version() {
 
     let (update_status, update_output) = read_update_response(&mut response, 1);
     assert_eq!(update_status, RenderStatus::Final);
-    assert!(update_output.prompt.contains("🦕 2.3.6"));
+    assert!(update_output.prompt.contains(" 2.3.6"));
     assert!(
         !update_output.prompt.contains("22.17.0"),
         "deno marker should suppress node_version: {}",

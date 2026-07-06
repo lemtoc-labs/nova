@@ -598,6 +598,8 @@ order; do not start async work before the sync renderer is snapshot-tested.
     `deno_version`, `nix_shell`, and `aws`.
   - Runtime segments are part of the default layout and render nothing when
     their detection rules do not match.
+  - Runtime/tool default icons prefer canonical Nerd Font glyphs where one is
+    available; users can override or remove each icon with segment config.
   - Nova does not add a `via` connector by default. A future formatting option
     may allow users to add one explicitly.
   - Bun and Node are mutually exclusive when both rules match, with Bun taking
