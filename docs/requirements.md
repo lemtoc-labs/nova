@@ -188,7 +188,7 @@ The default interactive architecture is described in [design.md](design.md). Nov
 The following questions are resolved; rationale lives in the Decisions section of [design.md](design.md):
 
 - Nova ships a single `nova` CLI binary (`init`, `worker`, `prompt`, `check`) alongside the library.
-- Default segments: `dir`, `git_branch`, `git_status`, `duration`, `prompt_char`.
+- Default segments: `dir`, `git_branch`, `git_status`, `rust_version`, `duration`, `prompt_char`.
 - Minimum supported zsh version: 5.8.
 - The non-Nerd-Font fallback theme is deferred past the first release; icons remain user-overridable in config.
 - No async runtime: the worker uses `std::thread` with a bounded pool, because asynchronous path speed is a non-goal.

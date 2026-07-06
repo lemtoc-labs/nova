@@ -33,7 +33,7 @@ sections.
 | Initial render wait          | zsh waits ≤ 50 ms via `zselect`, then falls back; result applied later via `zle -F`             | zsh Adapter             |
 | Disk cache                   | Deferred until measurements justify it                                                          | Cache                   |
 | Minimum zsh                  | 5.8                                                                                             | zsh Adapter             |
-| Default segments             | `dir`, `git_branch`, `git_status`, `duration`, `prompt_char`                                    | Configuration           |
+| Default segments             | `dir`, `git_branch`, `git_status`, `rust_version`, `duration`, `prompt_char`                    | Configuration           |
 | Worker sharing across shells | No                                                                                              | Process Model           |
 | Rust toolchain               | Latest stable, edition 2024, `#![forbid(unsafe_code)]`                                          | Testing Strategy        |
 
@@ -488,7 +488,7 @@ built-in defaults. Missing file is not an error.
 lines = 2                       # 1 or 2
 
 [layout.line1]
-left  = ["dir", "git_branch", "git_status"]
+left  = ["dir", "git_branch", "git_status", "rust_version"]
 right = ["duration"]
 
 [layout.line2]
@@ -505,6 +505,9 @@ style = { fg = "blue", bold = true }
 [segments.git_status]
 ttl_ms = 0
 icons = { staged = "", conflicted = "", stash = "" }
+
+[segments.rust_version]
+timeout_ms = 1000
 
 [segments.duration]
 min_ms = 2000                   # hide below this

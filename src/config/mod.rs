@@ -38,6 +38,7 @@ pub struct LineConfig {
 pub struct SegmentConfig {
     pub max_components: Option<usize>,
     pub min_ms: Option<u64>,
+    pub timeout_ms: Option<u64>,
     pub style: StyleConfig,
 }
 
@@ -99,6 +100,7 @@ impl Default for LayoutConfig {
                     "dir".to_string(),
                     "git_branch".to_string(),
                     "git_status".to_string(),
+                    "rust_version".to_string(),
                 ],
                 right: vec!["duration".to_string()],
             },
@@ -121,7 +123,7 @@ mod tests {
         assert_eq!(config.layout.lines, 2);
         assert_eq!(
             config.layout.line1.left,
-            ["dir", "git_branch", "git_status"]
+            ["dir", "git_branch", "git_status", "rust_version"]
         );
         assert_eq!(config.layout.line1.right, ["duration"]);
         assert_eq!(config.layout.line2.left, ["exit_status", "prompt_char"]);
@@ -140,6 +142,7 @@ mod tests {
 
             [segments.dir]
             max_components = 2
+            timeout_ms = 1234
             style = { fg = "blue", bold = true }
             "#,
         )
@@ -148,6 +151,7 @@ mod tests {
         let dir = config.segment("dir");
         assert_eq!(config.layout.lines, 1);
         assert_eq!(dir.max_components, Some(2));
+        assert_eq!(dir.timeout_ms, Some(1_234));
         assert_eq!(dir.style.fg.as_deref(), Some("blue"));
         assert!(dir.style.bold);
     }

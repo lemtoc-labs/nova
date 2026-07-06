@@ -13,8 +13,8 @@ use std::time::{Duration, Instant};
 use thiserror::Error;
 
 use crate::cache::{CacheKey, SegmentCache};
-use crate::config::Config;
 use crate::config::load::load_config;
+use crate::config::{Config, SegmentConfig};
 use crate::render::{AsyncSegmentValues, LoweredPrompt, render_with_async};
 use crate::segments::SegmentContent;
 use crate::segments::git::{collect_git_status, render_git_branch, render_git_status};
@@ -334,40 +334,36 @@ fn schedule_git_refresh(
     let job_branch_key = branch_key.clone();
     let branch_config = config.segment("git_branch");
     let status_config = config.segment("git_status");
-    let spawn_result = pool.spawn(
-        generation,
-        status_key.clone(),
-        GIT_TIMEOUT,
-        move |deadline| {
-            let Ok(Some(status)) = collect_git_status(&cwd, deadline) else {
-                return AsyncJobSegments {
-                    segments: vec![
-                        AsyncJobSegment {
-                            key: job_branch_key,
-                            content: None,
-                        },
-                        AsyncJobSegment {
-                            key: job_status_key,
-                            content: None,
-                        },
-                    ],
-                };
-            };
-
-            AsyncJobSegments {
+    let timeout = segment_timeout(&status_config, GIT_TIMEOUT);
+    let spawn_result = pool.spawn(generation, status_key.clone(), timeout, move |deadline| {
+        let Ok(Some(status)) = collect_git_status(&cwd, deadline) else {
+            return AsyncJobSegments {
                 segments: vec![
                     AsyncJobSegment {
                         key: job_branch_key,
-                        content: render_git_branch(&status, &branch_config),
+                        content: None,
                     },
                     AsyncJobSegment {
                         key: job_status_key,
-                        content: render_git_status(&status, &status_config),
+                        content: None,
                     },
                 ],
-            }
-        },
-    );
+            };
+        };
+
+        AsyncJobSegments {
+            segments: vec![
+                AsyncJobSegment {
+                    key: job_branch_key,
+                    content: render_git_branch(&status, &branch_config),
+                },
+                AsyncJobSegment {
+                    key: job_status_key,
+                    content: render_git_status(&status, &status_config),
+                },
+            ],
+        }
+    });
 
     if spawn_result.is_err() {
         cache.complete_failure(status_key, Instant::now());
@@ -392,8 +388,9 @@ fn schedule_rust_refresh(
 
     cache.mark_inflight(key.clone());
     let rust_config = config.segment("rust_version");
+    let timeout = segment_timeout(&rust_config, RUNTIME_TIMEOUT);
     let job_key = key.clone();
-    let spawn_result = pool.spawn(generation, key.clone(), RUNTIME_TIMEOUT, move |deadline| {
+    let spawn_result = pool.spawn(generation, key.clone(), timeout, move |deadline| {
         let content = collect_rust_version(&cwd, deadline)
             .ok()
             .flatten()
@@ -448,6 +445,14 @@ fn config_uses_segment(config: &Config, id: &str) -> bool {
             .any(|segment| segment == id)
 }
 
+fn segment_timeout(config: &SegmentConfig, default: Duration) -> Duration {
+    config
+        .timeout_ms
+        .map(Duration::from_millis)
+        .filter(|timeout| !timeout.is_zero())
+        .unwrap_or(default)
+}
+
 fn write_record<W>(writer: &mut W, record: &WorkerRecord) -> Result<(), WorkerError>
 where
     W: Write,
@@ -456,4 +461,35 @@ where
         .write_all(encode_worker_record(record).as_bytes())
         .map_err(WorkerError::Write)?;
     writer.flush().map_err(WorkerError::Write)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn segment_timeout_uses_configured_milliseconds() {
+        let config = SegmentConfig {
+            timeout_ms: Some(2_500),
+            ..SegmentConfig::default()
+        };
+
+        assert_eq!(
+            segment_timeout(&config, Duration::from_secs(1)),
+            Duration::from_millis(2_500)
+        );
+    }
+
+    #[test]
+    fn segment_timeout_ignores_zero_overrides() {
+        let config = SegmentConfig {
+            timeout_ms: Some(0),
+            ..SegmentConfig::default()
+        };
+
+        assert_eq!(
+            segment_timeout(&config, Duration::from_secs(1)),
+            Duration::from_secs(1)
+        );
+    }
 }
