@@ -3,9 +3,14 @@
 pub mod width;
 pub mod zsh;
 
+use std::collections::BTreeMap;
+
+use crate::cache::AsyncValue;
 use crate::config::{Config, LineConfig};
 use crate::segments::{SegmentContent, render_sync_segment};
 use crate::state::PromptState;
+
+pub type AsyncSegmentValues = BTreeMap<String, AsyncValue>;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RenderedPrompt {
@@ -25,10 +30,37 @@ pub fn render(config: &Config, state: &PromptState) -> LoweredPrompt {
     lower(render_structured(config, state), state.columns)
 }
 
+pub fn render_with_async(
+    config: &Config,
+    state: &PromptState,
+    async_values: &AsyncSegmentValues,
+) -> LoweredPrompt {
+    lower(
+        render_structured_with_async(config, state, async_values),
+        state.columns,
+    )
+}
+
 pub fn render_structured(config: &Config, state: &PromptState) -> RenderedPrompt {
-    let line1 = render_line(&config.layout.line1, config, state);
+    render_structured_inner(config, state, None)
+}
+
+pub fn render_structured_with_async(
+    config: &Config,
+    state: &PromptState,
+    async_values: &AsyncSegmentValues,
+) -> RenderedPrompt {
+    render_structured_inner(config, state, Some(async_values))
+}
+
+fn render_structured_inner(
+    config: &Config,
+    state: &PromptState,
+    async_values: Option<&AsyncSegmentValues>,
+) -> RenderedPrompt {
+    let line1 = render_line(&config.layout.line1, config, state, async_values);
     let line2 = if config.layout.lines == 2 {
-        render_line(&config.layout.line2, config, state)
+        render_line(&config.layout.line2, config, state, async_values)
     } else {
         RenderedLine::default()
     };
@@ -70,17 +102,47 @@ pub fn lower(rendered: RenderedPrompt, columns: u16) -> LoweredPrompt {
     }
 }
 
-fn render_line(line: &LineConfig, config: &Config, state: &PromptState) -> RenderedLine {
+fn render_line(
+    line: &LineConfig,
+    config: &Config,
+    state: &PromptState,
+    async_values: Option<&AsyncSegmentValues>,
+) -> RenderedLine {
     RenderedLine {
-        left: render_side(&line.left, config, state),
-        right: render_side(&line.right, config, state),
+        left: render_side(&line.left, config, state, async_values),
+        right: render_side(&line.right, config, state, async_values),
     }
 }
 
-fn render_side(ids: &[String], config: &Config, state: &PromptState) -> Vec<SegmentContent> {
+fn render_side(
+    ids: &[String],
+    config: &Config,
+    state: &PromptState,
+    async_values: Option<&AsyncSegmentValues>,
+) -> Vec<SegmentContent> {
     ids.iter()
-        .filter_map(|id| render_sync_segment(id, state, &config.segment(id)))
+        .filter_map(|id| render_segment(id, config, state, async_values))
         .collect()
+}
+
+fn render_segment(
+    id: &str,
+    config: &Config,
+    state: &PromptState,
+    async_values: Option<&AsyncSegmentValues>,
+) -> Option<SegmentContent> {
+    render_sync_segment(id, state, &config.segment(id)).or_else(|| {
+        async_values
+            .and_then(|values| values.get(id))
+            .and_then(async_value_content)
+    })
+}
+
+fn async_value_content(value: &AsyncValue) -> Option<SegmentContent> {
+    match value {
+        AsyncValue::Ready(content) | AsyncValue::Stale(content) => Some(content.clone()),
+        AsyncValue::Loading | AsyncValue::Failed => None,
+    }
 }
 
 fn lower_first_line(left: &[SegmentContent], right: &[SegmentContent], columns: usize) -> String {
@@ -192,7 +254,9 @@ mod tests {
     use proptest::prelude::*;
 
     use super::*;
+    use crate::cache::AsyncValue;
     use crate::config::{Config, LayoutConfig, LineConfig};
+    use crate::segments::Style;
     use crate::state::Keymap;
 
     #[test]
@@ -239,6 +303,103 @@ mod tests {
         let output = render(&config, &state);
         assert_snapshot!(output.prompt, @r###"/repo %{[1;32m%}❯%{[0m%}"###);
         assert_snapshot!(output.rprompt, @"5.0s");
+    }
+
+    #[test]
+    fn includes_ready_async_segments_in_layout_order() {
+        let state = PromptState {
+            cwd: PathBuf::from("/repo"),
+            exit_status: 0,
+            duration_ms: None,
+            columns: 80,
+            keymap: Keymap::Main,
+        };
+        let config = Config {
+            layout: LayoutConfig {
+                lines: 1,
+                line1: LineConfig {
+                    left: vec![
+                        "dir".to_string(),
+                        "git_branch".to_string(),
+                        "git_status".to_string(),
+                        "prompt_char".to_string(),
+                    ],
+                    right: Vec::new(),
+                },
+                line2: LineConfig::default(),
+            },
+            segments: Default::default(),
+        };
+        let async_values = AsyncSegmentValues::from([
+            (
+                "git_branch".to_string(),
+                AsyncValue::Ready(SegmentContent::new("git_branch", "main", Style::default())),
+            ),
+            (
+                "git_status".to_string(),
+                AsyncValue::Ready(SegmentContent::new("git_status", "[+1]", Style::default())),
+            ),
+        ]);
+
+        let rendered = render_structured_with_async(&config, &state, &async_values);
+
+        assert_eq!(
+            rendered
+                .line1_left
+                .iter()
+                .map(|segment| segment.id.as_str())
+                .collect::<Vec<_>>(),
+            ["dir", "git_branch", "git_status", "prompt_char"]
+        );
+        assert_eq!(rendered.line1_left[1].text, "main");
+        assert_eq!(rendered.line1_left[2].text, "[+1]");
+    }
+
+    #[test]
+    fn includes_stale_async_segments_and_omits_unavailable_states() {
+        let state = PromptState {
+            cwd: PathBuf::from("/repo"),
+            exit_status: 0,
+            duration_ms: None,
+            columns: 80,
+            keymap: Keymap::Main,
+        };
+        let config = Config {
+            layout: LayoutConfig {
+                lines: 1,
+                line1: LineConfig {
+                    left: vec![
+                        "git_branch".to_string(),
+                        "git_status".to_string(),
+                        "runtime".to_string(),
+                        "prompt_char".to_string(),
+                    ],
+                    right: Vec::new(),
+                },
+                line2: LineConfig::default(),
+            },
+            segments: Default::default(),
+        };
+        let async_values = AsyncSegmentValues::from([
+            (
+                "git_branch".to_string(),
+                AsyncValue::Stale(SegmentContent::new("git_branch", "main", Style::default())),
+            ),
+            ("git_status".to_string(), AsyncValue::Loading),
+            ("runtime".to_string(), AsyncValue::Failed),
+        ]);
+
+        let rendered = render_structured_with_async(&config, &state, &async_values);
+
+        assert_eq!(
+            rendered
+                .line1_left
+                .iter()
+                .map(|segment| segment.id.as_str())
+                .collect::<Vec<_>>(),
+            ["git_branch", "prompt_char"]
+        );
+        assert_eq!(rendered.line1_left[0].text, "main");
     }
 
     #[test]
