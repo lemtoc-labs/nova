@@ -1,9 +1,10 @@
 #![cfg(unix)]
 
 use std::collections::VecDeque;
+use std::env;
 use std::fs::{self, OpenOptions};
 use std::io::{Read, Write};
-use std::os::unix::fs::OpenOptionsExt;
+use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::process::Command as StdCommand;
 use std::thread;
@@ -120,6 +121,83 @@ fn worker_sends_update_when_git_status_finishes() {
     let update_output = read_update_output(&mut response, 1);
     assert!(update_output.prompt.contains("main"));
     assert!(update_output.prompt.contains("[+1]"));
+
+    drop(request);
+    drop(response);
+    assert_worker_exits(&mut child);
+}
+
+#[test]
+fn worker_sends_update_when_rust_version_finishes() {
+    let tempdir = tempfile::tempdir().expect("tempdir should be created");
+    let runtime_dir = tempdir.path().join("runtime");
+    fs::create_dir(&runtime_dir).expect("runtime dir should be created");
+    create_fifo(runtime_dir.join("req"));
+    create_fifo(runtime_dir.join("resp"));
+
+    let project = tempdir.path().join("project");
+    fs::create_dir(&project).expect("project dir should be created");
+    fs::write(project.join("Cargo.toml"), "[package]\nname = \"demo\"\n")
+        .expect("Cargo.toml should be written");
+
+    let config_path = tempdir.path().join("nova.toml");
+    fs::write(
+        &config_path,
+        r#"
+        [layout]
+        lines = 2
+
+        [layout.line1]
+        left = ["dir", "rust_version"]
+        right = []
+
+        [layout.line2]
+        left = ["prompt_char"]
+        right = []
+        "#,
+    )
+    .expect("config should be written");
+
+    let bin_dir = tempdir.path().join("bin");
+    fs::create_dir(&bin_dir).expect("bin dir should be created");
+    write_script(&bin_dir, "rustc", "printf 'rustc 1.96.1 (abc date)\\n'\n");
+
+    let path = format!(
+        "{}:{}",
+        bin_dir.to_string_lossy(),
+        env::var("PATH").unwrap_or_default()
+    );
+    let mut child = StdCommand::new(cargo_bin("nova"))
+        .arg("worker")
+        .arg("--dir")
+        .arg(&runtime_dir)
+        .arg("--session-token")
+        .arg("test-token")
+        .env("NOVA_CONFIG", &config_path)
+        .env("PATH", path)
+        .spawn()
+        .expect("worker should spawn");
+
+    let mut request = open_fifo_write(runtime_dir.join("req"));
+    let mut response = WorkerReader::new(open_fifo_read(runtime_dir.join("resp")));
+
+    assert_eq!(
+        read_worker_record(&mut response),
+        WorkerRecord::Handshake {
+            session_token: "test-token".to_string()
+        }
+    );
+
+    write_render_request(&mut request, 1, project, 160);
+    let first_output = read_prompt_output(&mut response, 1);
+    assert!(
+        !first_output.prompt.contains("rust 1.96.1"),
+        "first render should not block on rust version: {}",
+        first_output.prompt
+    );
+
+    let update_output = read_update_output(&mut response, 1);
+    assert!(update_output.prompt.contains("rust 1.96.1"));
 
     drop(request);
     drop(response);
@@ -306,6 +384,17 @@ fn run_git(path: &Path, args: &[&str]) {
         args,
         String::from_utf8_lossy(&output.stderr)
     );
+}
+
+fn write_script(dir: &Path, name: &str, body: &str) -> PathBuf {
+    let path = dir.join(name);
+    fs::write(&path, format!("#!/bin/sh\n{body}")).expect("script should be written");
+    let mut permissions = fs::metadata(&path)
+        .expect("script metadata should be read")
+        .permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(&path, permissions).expect("script should be executable");
+    path
 }
 
 fn assert_worker_exits(child: &mut std::process::Child) {
