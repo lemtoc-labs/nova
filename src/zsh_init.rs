@@ -99,4 +99,14 @@ mod tests {
 
         assert!(script.contains("${AWS_SESSION_TOKEN:+1}${_nova_nul}${PATH:-}${_nova_rs}"));
     }
+
+    #[test]
+    fn checks_request_write_byte_count() {
+        let script = render_init_script(Path::new("/tmp/nova"));
+
+        assert!(script.contains("local -i wrote=0 frame_len=0"));
+        assert!(script.contains("setopt localoptions no_multibyte; frame_len=${#1}"));
+        assert!(script.contains("syswrite -c wrote -o \"$_nova_req_fd\" -- \"$frame\""));
+        assert!(script.contains("(( wrote != frame_len ))"));
+    }
 }
