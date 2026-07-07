@@ -558,9 +558,8 @@ mod tests {
         });
         let encoded = encode_client_record(&record);
         let frame = encoded.trim_end_matches(RECORD_SEPARATOR);
-        let decoded = match decode_client_record(frame).expect("record should decode") {
-            ClientRecord::Render(request) => request,
-        };
+        let ClientRecord::Render(decoded) =
+            decode_client_record(frame).expect("record should decode");
 
         assert_eq!(decoded.state.env.path.as_deref(), Some("abc"));
     }
