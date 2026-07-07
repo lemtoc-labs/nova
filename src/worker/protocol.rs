@@ -7,7 +7,7 @@ use thiserror::Error;
 use crate::render::LoweredPrompt;
 use crate::state::{AwsEnv, Keymap, PromptEnv, PromptState};
 
-pub const VERSION: &str = "5";
+pub const VERSION: &str = "6";
 const FIELD_SEPARATOR: char = '\0';
 const RECORD_SEPARATOR: char = '\x1e';
 
@@ -190,6 +190,7 @@ pub fn encode_client_record(record: &ClientRecord) -> String {
             bool_field(request.state.env.aws.aws_access_key_id_present),
             bool_field(request.state.env.aws.aws_secret_access_key_present),
             bool_field(request.state.env.aws.aws_session_token_present),
+            request.state.env.path.clone().unwrap_or_default(),
         ]),
     }
 }
@@ -202,7 +203,7 @@ pub fn decode_client_record(record: &str) -> Result<ClientRecord, ProtocolError>
 
     match record_type.as_str() {
         "R" => {
-            expect_field_count(record_type, fields.len(), 28)?;
+            expect_render_field_count(record_type, fields.len())?;
             let generation = parse_u64("gen", &fields[1])?;
             let exit_status = parse_i32("exit_status", &fields[3])?;
             let duration_ms = if fields[4].is_empty() {
@@ -225,6 +226,7 @@ pub fn decode_client_record(record: &str) -> Result<ClientRecord, ProtocolError>
                     env: PromptEnv {
                         user: non_empty_string(&fields[7]),
                         host: non_empty_string(&fields[8]),
+                        path: fields.get(28).and_then(|value| non_empty_string(value)),
                         virtual_env: non_empty_path(&fields[10]),
                         in_nix_shell: non_empty_string(&fields[11]),
                         nix_shell_name: non_empty_string(&fields[12]),
@@ -364,6 +366,18 @@ fn expect_field_count(record: &str, actual: usize, expected: usize) -> Result<()
     }
 }
 
+fn expect_render_field_count(record: &str, actual: usize) -> Result<(), ProtocolError> {
+    if actual == 28 || actual == 29 {
+        Ok(())
+    } else {
+        Err(ProtocolError::WrongFieldCount {
+            record: record.to_string(),
+            expected: 29,
+            actual,
+        })
+    }
+}
+
 fn parse_u64(field: &str, value: &str) -> Result<u64, ProtocolError> {
     value
         .parse()
@@ -453,6 +467,7 @@ mod tests {
                 env: PromptEnv {
                     user: Some("nova".to_string()),
                     host: Some("M4Pro".to_string()),
+                    path: Some("/opt/nova/bin:/usr/bin:/bin".to_string()),
                     virtual_env: Some(PathBuf::from("/tmp/nova-venv")),
                     in_nix_shell: Some("pure".to_string()),
                     nix_shell_name: Some("nova".to_string()),
@@ -498,6 +513,56 @@ mod tests {
         let encoded = encoded.trim_end_matches(RECORD_SEPARATOR);
 
         assert_eq!(decode_worker_record(encoded), Ok(record));
+    }
+
+    #[test]
+    fn decodes_render_requests_without_path_field() {
+        let record = ClientRecord::Render(RenderRequest {
+            generation: 7,
+            state: PromptState {
+                cwd: PathBuf::from("/tmp/nova"),
+                exit_status: 0,
+                duration_ms: None,
+                time: None,
+                columns: 80,
+                keymap: Keymap::Main,
+                env: PromptEnv::default(),
+            },
+        });
+        let encoded = encode_client_record(&record);
+        let frame = encoded.trim_end_matches(RECORD_SEPARATOR);
+        let legacy_frame = frame
+            .strip_suffix(FIELD_SEPARATOR)
+            .expect("empty PATH field should be last");
+
+        assert_eq!(legacy_frame.split(FIELD_SEPARATOR).count(), 28);
+        assert_eq!(decode_client_record(legacy_frame), Ok(record));
+    }
+
+    #[test]
+    fn strips_protocol_separators_from_client_path_field() {
+        let record = ClientRecord::Render(RenderRequest {
+            generation: 7,
+            state: PromptState {
+                cwd: PathBuf::from("/tmp/nova"),
+                exit_status: 0,
+                duration_ms: None,
+                time: None,
+                columns: 80,
+                keymap: Keymap::Main,
+                env: PromptEnv {
+                    path: Some("a\0b\x1ec".to_string()),
+                    ..PromptEnv::default()
+                },
+            },
+        });
+        let encoded = encode_client_record(&record);
+        let frame = encoded.trim_end_matches(RECORD_SEPARATOR);
+        let decoded = match decode_client_record(frame).expect("record should decode") {
+            ClientRecord::Render(request) => request,
+        };
+
+        assert_eq!(decoded.state.env.path.as_deref(), Some("abc"));
     }
 
     #[test]

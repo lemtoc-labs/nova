@@ -388,6 +388,7 @@ fn async_values(
     let now = Instant::now();
     let mut values = AsyncSegmentValues::new();
     let cwd = &state.cwd;
+    let path = state.env.path.as_deref();
 
     if config_uses_any_segment(config, &["git_branch", "git_status"])
         && let Some(status_key) = git_cache_key(cwd, config_generation)
@@ -405,36 +406,40 @@ fn async_values(
     }
 
     if config_uses_segment(config, "rust_version")
-        && let Some(key) = rust_cache_key(cwd, config_generation)
+        && let Some(key) = rust_cache_key(cwd, path, config_generation)
     {
         let ttl = segment_ttl(&config.segment("rust_version"), RUNTIME_REFRESH_TTL);
         values.insert("rust_version".to_string(), cache.lookup(&key, now, ttl));
     }
 
     if config_uses_segment(config, "bun_version")
-        && let Some(key) = bun_cache_key(cwd, config_generation)
+        && let Some(key) = bun_cache_key(cwd, path, config_generation)
     {
         let ttl = segment_ttl(&config.segment("bun_version"), RUNTIME_REFRESH_TTL);
         values.insert("bun_version".to_string(), cache.lookup(&key, now, ttl));
     }
 
     if config_uses_segment(config, "deno_version")
-        && let Some(key) = deno_cache_key(cwd, config_generation)
+        && let Some(key) = deno_cache_key(cwd, path, config_generation)
     {
         let ttl = segment_ttl(&config.segment("deno_version"), RUNTIME_REFRESH_TTL);
         values.insert("deno_version".to_string(), cache.lookup(&key, now, ttl));
     }
 
     if config_uses_segment(config, "python_version")
-        && let Some(key) =
-            python_cache_key(cwd, state.env.virtual_env.as_deref(), config_generation)
+        && let Some(key) = python_cache_key(
+            cwd,
+            state.env.virtual_env.as_deref(),
+            path,
+            config_generation,
+        )
     {
         let ttl = segment_ttl(&config.segment("python_version"), RUNTIME_REFRESH_TTL);
         values.insert("python_version".to_string(), cache.lookup(&key, now, ttl));
     }
 
     if config_uses_segment(config, "node_version")
-        && let Some(key) = node_cache_key(cwd, config_generation)
+        && let Some(key) = node_cache_key(cwd, path, config_generation)
     {
         let ttl = segment_ttl(&config.segment("node_version"), RUNTIME_REFRESH_TTL);
         values.insert("node_version".to_string(), cache.lookup(&key, now, ttl));
@@ -453,6 +458,7 @@ fn schedule_async_refreshes(
 ) {
     let cwd = state.cwd;
     let env = state.env;
+    let path = env.path.clone();
     schedule_git_refresh(
         pool,
         cache,
@@ -466,6 +472,7 @@ fn schedule_async_refreshes(
         cache,
         generation,
         cwd.clone(),
+        path.clone(),
         config,
         config_generation,
     );
@@ -474,6 +481,7 @@ fn schedule_async_refreshes(
         cache,
         generation,
         cwd.clone(),
+        path.clone(),
         config,
         config_generation,
     );
@@ -482,6 +490,7 @@ fn schedule_async_refreshes(
         cache,
         generation,
         cwd.clone(),
+        path.clone(),
         config,
         config_generation,
     );
@@ -494,7 +503,15 @@ fn schedule_async_refreshes(
         config,
         config_generation,
     );
-    schedule_node_refresh(pool, cache, generation, cwd, config, config_generation);
+    schedule_node_refresh(
+        pool,
+        cache,
+        generation,
+        cwd,
+        path,
+        config,
+        config_generation,
+    );
 }
 
 fn schedule_git_refresh(
@@ -565,6 +582,7 @@ fn schedule_rust_refresh(
     cache: &mut SegmentCache,
     generation: u64,
     cwd: PathBuf,
+    path: Option<String>,
     config: &Config,
     config_generation: u64,
 ) {
@@ -572,7 +590,7 @@ fn schedule_rust_refresh(
         return;
     }
 
-    let Some(key) = rust_cache_key(&cwd, config_generation) else {
+    let Some(key) = rust_cache_key(&cwd, path.as_deref(), config_generation) else {
         return;
     };
 
@@ -586,7 +604,7 @@ fn schedule_rust_refresh(
     let timeout = segment_timeout(&rust_config, RUNTIME_TIMEOUT);
     let job_key = key.clone();
     let spawn_result = pool.spawn(generation, key.clone(), timeout, move |deadline| {
-        let content = collect_rust_version(&cwd, deadline)
+        let content = collect_rust_version(&cwd, path.as_deref(), deadline)
             .ok()
             .flatten()
             .and_then(|version| render_rust_version(&version, &rust_config));
@@ -608,6 +626,7 @@ fn schedule_node_refresh(
     cache: &mut SegmentCache,
     generation: u64,
     cwd: PathBuf,
+    path: Option<String>,
     config: &Config,
     config_generation: u64,
 ) {
@@ -615,7 +634,7 @@ fn schedule_node_refresh(
         return;
     }
 
-    let Some(key) = node_cache_key(&cwd, config_generation) else {
+    let Some(key) = node_cache_key(&cwd, path.as_deref(), config_generation) else {
         return;
     };
 
@@ -629,7 +648,7 @@ fn schedule_node_refresh(
     let timeout = segment_timeout(&node_config, RUNTIME_TIMEOUT);
     let job_key = key.clone();
     let spawn_result = pool.spawn(generation, key.clone(), timeout, move |deadline| {
-        let content = collect_node_version(&cwd, deadline)
+        let content = collect_node_version(&cwd, path.as_deref(), deadline)
             .ok()
             .flatten()
             .and_then(|version| render_node_version(&version, &node_config));
@@ -651,6 +670,7 @@ fn schedule_bun_refresh(
     cache: &mut SegmentCache,
     generation: u64,
     cwd: PathBuf,
+    path: Option<String>,
     config: &Config,
     config_generation: u64,
 ) {
@@ -658,7 +678,7 @@ fn schedule_bun_refresh(
         return;
     }
 
-    let Some(key) = bun_cache_key(&cwd, config_generation) else {
+    let Some(key) = bun_cache_key(&cwd, path.as_deref(), config_generation) else {
         return;
     };
 
@@ -672,7 +692,7 @@ fn schedule_bun_refresh(
     let timeout = segment_timeout(&bun_config, RUNTIME_TIMEOUT);
     let job_key = key.clone();
     let spawn_result = pool.spawn(generation, key.clone(), timeout, move |deadline| {
-        let content = collect_bun_version(&cwd, deadline)
+        let content = collect_bun_version(&cwd, path.as_deref(), deadline)
             .ok()
             .flatten()
             .and_then(|version| render_bun_version(&version, &bun_config));
@@ -694,6 +714,7 @@ fn schedule_deno_refresh(
     cache: &mut SegmentCache,
     generation: u64,
     cwd: PathBuf,
+    path: Option<String>,
     config: &Config,
     config_generation: u64,
 ) {
@@ -701,7 +722,7 @@ fn schedule_deno_refresh(
         return;
     }
 
-    let Some(key) = deno_cache_key(&cwd, config_generation) else {
+    let Some(key) = deno_cache_key(&cwd, path.as_deref(), config_generation) else {
         return;
     };
 
@@ -715,7 +736,7 @@ fn schedule_deno_refresh(
     let timeout = segment_timeout(&deno_config, RUNTIME_TIMEOUT);
     let job_key = key.clone();
     let spawn_result = pool.spawn(generation, key.clone(), timeout, move |deadline| {
-        let content = collect_deno_version(&cwd, deadline)
+        let content = collect_deno_version(&cwd, path.as_deref(), deadline)
             .ok()
             .flatten()
             .and_then(|version| render_deno_version(&version, &deno_config));
@@ -745,7 +766,12 @@ fn schedule_python_refresh(
         return;
     }
 
-    let Some(key) = python_cache_key(&cwd, env.virtual_env.as_deref(), config_generation) else {
+    let Some(key) = python_cache_key(
+        &cwd,
+        env.virtual_env.as_deref(),
+        env.path.as_deref(),
+        config_generation,
+    ) else {
         return;
     };
 
@@ -759,10 +785,15 @@ fn schedule_python_refresh(
     let timeout = segment_timeout(&python_config, RUNTIME_TIMEOUT);
     let job_key = key.clone();
     let spawn_result = pool.spawn(generation, key.clone(), timeout, move |deadline| {
-        let content = collect_python_version(&cwd, env.virtual_env.as_deref(), deadline)
-            .ok()
-            .flatten()
-            .and_then(|version| render_python_version(&version, &python_config));
+        let content = collect_python_version(
+            &cwd,
+            env.virtual_env.as_deref(),
+            env.path.as_deref(),
+            deadline,
+        )
+        .ok()
+        .flatten()
+        .and_then(|version| render_python_version(&version, &python_config));
         AsyncJobSegments {
             segments: vec![AsyncJobSegment {
                 key: job_key,

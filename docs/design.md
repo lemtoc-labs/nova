@@ -184,16 +184,26 @@ split it with nothing but parameter expansion:
   can hold and split on NUL (`${(0)...}` / `${(ps:\0:)...}`), unlike bash.
 - Record terminator: `RS` (`\x1e`). The worker guarantees it never emits NUL or
   RS inside payload fields (it strips control characters from all segment
-  text). A cwd containing RS is documented as unsupported.
+  text). A cwd or `PATH` containing RS is unsupported.
 
-Records (version 1):
+Records (current version 6):
 
 ```text
 worker -> zsh, once at startup (handshake):
-  H <NUL> 1 <NUL> session_token <RS>
+  H <NUL> 6 <NUL> session_token <RS>
 
 zsh -> worker, one per precmd:
-  R <NUL> gen <NUL> cwd <NUL> exit_status <NUL> duration_ms <NUL> cols <NUL> keymap <RS>
+  R <NUL> gen <NUL> cwd <NUL> exit_status <NUL> duration_ms <NUL> cols
+    <NUL> keymap <NUL> user <NUL> host <NUL> prompt_time
+    <NUL> VIRTUAL_ENV <NUL> IN_NIX_SHELL <NUL> name <NUL> NIX_SHELL_LEVEL
+    <NUL> HOME
+    <NUL> AWSU_PROFILE <NUL> AWS_VAULT <NUL> AWSUME_PROFILE
+    <NUL> AWS_PROFILE <NUL> AWS_SSO_PROFILE
+    <NUL> AWS_REGION <NUL> AWS_DEFAULT_REGION
+    <NUL> AWS_CONFIG_FILE <NUL> AWS_SHARED_CREDENTIALS_FILE
+    <NUL> AWS_CREDENTIALS_FILE
+    <NUL> AWS_ACCESS_KEY_ID_present <NUL> AWS_SECRET_ACCESS_KEY_present
+    <NUL> AWS_SESSION_TOKEN_present <NUL> PATH <RS>
 
 worker -> zsh, first reply for a generation:
   P <NUL> gen <NUL> final|partial <NUL> PROMPT <NUL> RPROMPT <RS>
@@ -389,6 +399,21 @@ is explicitly a non-goal**; simplicity and isolation win every tradeoff here.
 - Failures are isolated per segment: a panicking collector thread is caught
   (`catch_unwind` around the job body) and recorded as `Failed` without
   affecting other segments.
+
+Request-scoped command lookup environment:
+
+- zsh sends the current `PATH` in every render request. Runtime version
+  collectors (`rustc`, `node`, `bun`, `deno`, `python`) use that request-scoped
+  `PATH` for command lookup instead of relying only on the worker startup
+  environment.
+- Runtime cache keys include a digest of the request `PATH`, so a failed lookup
+  from an old environment is not reused after `direnv`/`nix develop` changes
+  command availability.
+- Empty or missing `PATH` fields fall back to the worker startup environment,
+  preserving direct `nova prompt` behavior and older request shapes.
+- Git collection intentionally uses the worker startup environment. If a shell
+  session changes `PATH` after worker spawn, runtime version collectors see the
+  new command lookup path; `git` does not.
 
 Git collection (rail):
 
