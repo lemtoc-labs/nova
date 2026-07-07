@@ -36,7 +36,6 @@ use protocol::{
 };
 
 const CACHE_CAPACITY: usize = 128;
-const EVENT_POLL_INTERVAL: Duration = Duration::from_millis(10);
 const GIT_REFRESH_TTL: Duration = Duration::ZERO;
 const GIT_TIMEOUT: Duration = Duration::from_secs(1);
 const MAX_CONCURRENCY: usize = 2;
@@ -94,28 +93,20 @@ pub fn run(options: WorkerOptions) -> Result<(), WorkerError> {
         },
     )?;
 
-    let (request_events, request_event_receiver) = mpsc::channel::<RequestEvent>();
-    spawn_request_reader(request, request_events);
+    let (events, event_receiver) = mpsc::channel::<WorkerEvent>();
+    spawn_request_reader(request, events.clone());
 
     let mut decoder = FrameDecoder::default();
     let mut cache = SegmentCache::new(CACHE_CAPACITY);
-    let (job_results, job_result_receiver) = mpsc::channel::<JobResult<AsyncJobSegments>>();
-    let job_pool = JobPool::new(MAX_CONCURRENCY, job_results);
+    let job_pool = JobPool::new(MAX_CONCURRENCY, events);
     let mut active_prompt = None;
     let mut config_state = ConfigState::default();
     let mut warned_config_error = false;
     let mut warned_config_warnings = BTreeSet::new();
 
     loop {
-        drain_job_results(
-            &job_result_receiver,
-            &mut cache,
-            &mut response,
-            &mut active_prompt,
-        )?;
-
-        match request_event_receiver.recv_timeout(EVENT_POLL_INTERVAL) {
-            Ok(RequestEvent::Chunk(chunk)) => {
+        match event_receiver.recv() {
+            Ok(WorkerEvent::Chunk(chunk)) => {
                 handle_request_chunk(
                     &chunk,
                     &mut decoder,
@@ -128,32 +119,41 @@ pub fn run(options: WorkerOptions) -> Result<(), WorkerError> {
                     &job_pool,
                 )?;
             }
-            Ok(RequestEvent::Closed) | Err(mpsc::RecvTimeoutError::Disconnected) => return Ok(()),
-            Ok(RequestEvent::Error(error)) => return Err(WorkerError::Read(error)),
-            Err(mpsc::RecvTimeoutError::Timeout) => {}
+            Ok(WorkerEvent::Job(result)) => {
+                handle_job_result(result, &mut cache, &mut response, &mut active_prompt)?;
+            }
+            Ok(WorkerEvent::Closed) | Err(_) => return Ok(()),
+            Ok(WorkerEvent::ReadError(error)) => return Err(WorkerError::Read(error)),
         }
     }
 }
 
 #[derive(Debug)]
-enum RequestEvent {
+enum WorkerEvent {
     Chunk(Vec<u8>),
     Closed,
-    Error(std::io::Error),
+    ReadError(std::io::Error),
+    Job(JobResult<AsyncJobSegments>),
 }
 
-fn spawn_request_reader(mut request: std::fs::File, sender: mpsc::Sender<RequestEvent>) {
+impl From<JobResult<AsyncJobSegments>> for WorkerEvent {
+    fn from(result: JobResult<AsyncJobSegments>) -> Self {
+        Self::Job(result)
+    }
+}
+
+fn spawn_request_reader(mut request: std::fs::File, sender: mpsc::Sender<WorkerEvent>) {
     thread::spawn(move || {
         let mut buffer = [0_u8; 4096];
         loop {
             match request.read(&mut buffer) {
                 Ok(0) => {
-                    let _ = sender.send(RequestEvent::Closed);
+                    let _ = sender.send(WorkerEvent::Closed);
                     return;
                 }
                 Ok(bytes_read) => {
                     if sender
-                        .send(RequestEvent::Chunk(buffer[..bytes_read].to_vec()))
+                        .send(WorkerEvent::Chunk(buffer[..bytes_read].to_vec()))
                         .is_err()
                     {
                         return;
@@ -161,7 +161,7 @@ fn spawn_request_reader(mut request: std::fs::File, sender: mpsc::Sender<Request
                 }
                 Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
                 Err(error) => {
-                    let _ = sender.send(RequestEvent::Error(error));
+                    let _ = sender.send(WorkerEvent::ReadError(error));
                     return;
                 }
             }
@@ -181,8 +181,7 @@ fn handle_request_chunk(
     active_prompt: &mut Option<ActivePrompt>,
     job_pool: &JobPool<AsyncJobSegments>,
 ) -> Result<(), WorkerError> {
-    let chunk = String::from_utf8_lossy(chunk);
-    for frame in decoder.push(&chunk) {
+    for frame in decoder.push(chunk) {
         let Ok(ClientRecord::Render(request)) = decode_client_record(&frame) else {
             continue;
         };
@@ -250,20 +249,12 @@ struct AsyncJobSegments {
 #[derive(Debug)]
 struct AsyncJobSegment {
     key: CacheKey,
-    content: Option<SegmentContent>,
+    content: Result<Option<SegmentContent>, CollectFailure>,
 }
 
-fn drain_job_results(
-    receiver: &mpsc::Receiver<JobResult<AsyncJobSegments>>,
-    cache: &mut SegmentCache,
-    response: &mut impl Write,
-    active_prompt: &mut Option<ActivePrompt>,
-) -> Result<(), WorkerError> {
-    while let Ok(result) = receiver.try_recv() {
-        handle_job_result(result, cache, response, active_prompt)?;
-    }
-
-    Ok(())
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum CollectFailure {
+    Failed,
 }
 
 fn handle_job_result(
@@ -272,9 +263,8 @@ fn handle_job_result(
     response: &mut impl Write,
     active_prompt: &mut Option<ActivePrompt>,
 ) -> Result<(), WorkerError> {
-    let generation = result.generation;
     complete_job_result(result, cache);
-    write_update_if_active(generation, cache, response, active_prompt)
+    write_update_if_active(cache, response, active_prompt)
 }
 
 fn complete_job_result(result: JobResult<AsyncJobSegments>, cache: &mut SegmentCache) {
@@ -297,7 +287,6 @@ fn complete_job_result(result: JobResult<AsyncJobSegments>, cache: &mut SegmentC
 }
 
 fn write_update_if_active(
-    generation: u64,
     cache: &SegmentCache,
     response: &mut impl Write,
     active_prompt: &mut Option<ActivePrompt>,
@@ -305,9 +294,6 @@ fn write_update_if_active(
     let Some(active_prompt) = active_prompt else {
         return Ok(());
     };
-    if generation != active_prompt.generation {
-        return Ok(());
-    }
 
     let async_values = async_values(
         cache,
@@ -324,7 +310,7 @@ fn write_update_if_active(
     write_record(
         response,
         &WorkerRecord::Update {
-            generation,
+            generation: active_prompt.generation,
             status,
             output: output.clone(),
         },
@@ -336,14 +322,22 @@ fn write_update_if_active(
 fn complete_segment(
     cache: &mut SegmentCache,
     key: CacheKey,
-    segment: Option<SegmentContent>,
+    segment: Result<Option<SegmentContent>, CollectFailure>,
     collected_at: Instant,
 ) {
-    if let Some(segment) = segment {
-        cache.complete_success(key, segment, collected_at);
-    } else {
-        cache.complete_failure(key, collected_at);
+    match segment {
+        Ok(segment) => cache.complete_success(key, segment, collected_at),
+        Err(CollectFailure::Failed) => cache.complete_failure(key, collected_at),
     }
+}
+
+fn render_collected_version<E>(
+    result: Result<Option<String>, E>,
+    render: impl FnOnce(&str) -> Option<SegmentContent>,
+) -> Result<Option<SegmentContent>, CollectFailure> {
+    result
+        .map(|version| version.and_then(|version| render(&version)))
+        .map_err(|_error| CollectFailure::Failed)
 }
 
 fn load_worker_config(
@@ -543,36 +537,54 @@ fn schedule_git_refresh(
     let branch_config = config.segment("git_branch");
     let timeout = segment_timeout(&status_config, GIT_TIMEOUT);
     let spawn_result = pool.spawn(generation, status_key.clone(), timeout, move |deadline| {
-        let Ok(Some(status)) = collect_git_status(&cwd, deadline) else {
-            return AsyncJobSegments {
-                segments: vec![
-                    AsyncJobSegment {
-                        key: job_branch_key,
-                        content: None,
-                    },
-                    AsyncJobSegment {
-                        key: job_status_key,
-                        content: None,
-                    },
-                ],
-            };
+        let status = match collect_git_status(&cwd, deadline) {
+            Ok(Some(status)) => status,
+            Ok(None) => {
+                return AsyncJobSegments {
+                    segments: vec![
+                        AsyncJobSegment {
+                            key: job_branch_key,
+                            content: Ok(None),
+                        },
+                        AsyncJobSegment {
+                            key: job_status_key,
+                            content: Ok(None),
+                        },
+                    ],
+                };
+            }
+            Err(_error) => {
+                return AsyncJobSegments {
+                    segments: vec![
+                        AsyncJobSegment {
+                            key: job_branch_key,
+                            content: Err(CollectFailure::Failed),
+                        },
+                        AsyncJobSegment {
+                            key: job_status_key,
+                            content: Err(CollectFailure::Failed),
+                        },
+                    ],
+                };
+            }
         };
 
         AsyncJobSegments {
             segments: vec![
                 AsyncJobSegment {
                     key: job_branch_key,
-                    content: render_git_branch(&status, &branch_config),
+                    content: Ok(render_git_branch(&status, &branch_config)),
                 },
                 AsyncJobSegment {
                     key: job_status_key,
-                    content: render_git_status(&status, &status_config),
+                    content: Ok(render_git_status(&status, &status_config)),
                 },
             ],
         }
     });
 
     if spawn_result.is_err() {
+        cache.complete_failure(branch_key, Instant::now());
         cache.complete_failure(status_key, Instant::now());
     }
 }
@@ -604,10 +616,10 @@ fn schedule_rust_refresh(
     let timeout = segment_timeout(&rust_config, RUNTIME_TIMEOUT);
     let job_key = key.clone();
     let spawn_result = pool.spawn(generation, key.clone(), timeout, move |deadline| {
-        let content = collect_rust_version(&cwd, path.as_deref(), deadline)
-            .ok()
-            .flatten()
-            .and_then(|version| render_rust_version(&version, &rust_config));
+        let content = render_collected_version(
+            collect_rust_version(&cwd, path.as_deref(), deadline),
+            |version| render_rust_version(version, &rust_config),
+        );
         AsyncJobSegments {
             segments: vec![AsyncJobSegment {
                 key: job_key,
@@ -648,10 +660,10 @@ fn schedule_node_refresh(
     let timeout = segment_timeout(&node_config, RUNTIME_TIMEOUT);
     let job_key = key.clone();
     let spawn_result = pool.spawn(generation, key.clone(), timeout, move |deadline| {
-        let content = collect_node_version(&cwd, path.as_deref(), deadline)
-            .ok()
-            .flatten()
-            .and_then(|version| render_node_version(&version, &node_config));
+        let content = render_collected_version(
+            collect_node_version(&cwd, path.as_deref(), deadline),
+            |version| render_node_version(version, &node_config),
+        );
         AsyncJobSegments {
             segments: vec![AsyncJobSegment {
                 key: job_key,
@@ -692,10 +704,10 @@ fn schedule_bun_refresh(
     let timeout = segment_timeout(&bun_config, RUNTIME_TIMEOUT);
     let job_key = key.clone();
     let spawn_result = pool.spawn(generation, key.clone(), timeout, move |deadline| {
-        let content = collect_bun_version(&cwd, path.as_deref(), deadline)
-            .ok()
-            .flatten()
-            .and_then(|version| render_bun_version(&version, &bun_config));
+        let content = render_collected_version(
+            collect_bun_version(&cwd, path.as_deref(), deadline),
+            |version| render_bun_version(version, &bun_config),
+        );
         AsyncJobSegments {
             segments: vec![AsyncJobSegment {
                 key: job_key,
@@ -736,10 +748,10 @@ fn schedule_deno_refresh(
     let timeout = segment_timeout(&deno_config, RUNTIME_TIMEOUT);
     let job_key = key.clone();
     let spawn_result = pool.spawn(generation, key.clone(), timeout, move |deadline| {
-        let content = collect_deno_version(&cwd, path.as_deref(), deadline)
-            .ok()
-            .flatten()
-            .and_then(|version| render_deno_version(&version, &deno_config));
+        let content = render_collected_version(
+            collect_deno_version(&cwd, path.as_deref(), deadline),
+            |version| render_deno_version(version, &deno_config),
+        );
         AsyncJobSegments {
             segments: vec![AsyncJobSegment {
                 key: job_key,
@@ -785,15 +797,15 @@ fn schedule_python_refresh(
     let timeout = segment_timeout(&python_config, RUNTIME_TIMEOUT);
     let job_key = key.clone();
     let spawn_result = pool.spawn(generation, key.clone(), timeout, move |deadline| {
-        let content = collect_python_version(
-            &cwd,
-            env.virtual_env.as_deref(),
-            env.path.as_deref(),
-            deadline,
-        )
-        .ok()
-        .flatten()
-        .and_then(|version| render_python_version(&version, &python_config));
+        let content = render_collected_version(
+            collect_python_version(
+                &cwd,
+                env.virtual_env.as_deref(),
+                env.path.as_deref(),
+                deadline,
+            ),
+            |version| render_python_version(version, &python_config),
+        );
         AsyncJobSegments {
             segments: vec![AsyncJobSegment {
                 key: job_key,
@@ -874,6 +886,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::worker::protocol::decode_worker_record;
 
     #[test]
     fn segment_timeout_uses_configured_milliseconds() {
@@ -942,11 +955,11 @@ mod tests {
             ("git_branch".to_string(), AsyncValue::Failed),
             (
                 "git_status".to_string(),
-                AsyncValue::Stale(SegmentContent::new(
+                AsyncValue::Stale(Some(SegmentContent::new(
                     "git_status",
                     "[+1]",
                     Default::default(),
-                )),
+                ))),
             ),
             ("rust_version".to_string(), AsyncValue::Failed),
         ]);
@@ -959,11 +972,11 @@ mod tests {
         let values = AsyncSegmentValues::from([
             (
                 "git_branch".to_string(),
-                AsyncValue::Ready(SegmentContent::new(
+                AsyncValue::Ready(Some(SegmentContent::new(
                     "git_branch",
                     "main",
                     Default::default(),
-                )),
+                ))),
             ),
             ("git_status".to_string(), AsyncValue::Failed),
             ("rust_version".to_string(), AsyncValue::Failed),
@@ -993,6 +1006,170 @@ mod tests {
         assert_eq!(
             render_status(&config, &AsyncSegmentValues::new()),
             RenderStatus::Final
+        );
+    }
+
+    #[test]
+    fn stale_generation_job_updates_active_prompt_generation() {
+        let tempdir = tempfile::tempdir().expect("tempdir should be created");
+        std::fs::write(
+            tempdir.path().join("Cargo.toml"),
+            "[package]\nname = \"demo\"\n",
+        )
+        .expect("Cargo.toml should be written");
+        let config = Config::from_toml(
+            r#"
+            [layout]
+            lines = 2
+
+            [layout.line1]
+            left = ["rust_version"]
+            right = []
+
+            [layout.line2]
+            left = ["prompt_char"]
+            right = []
+            "#,
+        )
+        .expect("config should parse");
+        let config_generation = 1;
+        let state = PromptState {
+            cwd: tempdir.path().to_path_buf(),
+            exit_status: 0,
+            duration_ms: None,
+            time: None,
+            columns: 120,
+            keymap: Default::default(),
+            env: Default::default(),
+        };
+        let key = rust_cache_key(&state.cwd, None, config_generation)
+            .expect("rust cache key should be available");
+        let mut cache = SegmentCache::new(4);
+        let initial_values = async_values(&cache, &state, &config, config_generation);
+        let output = render_with_async(&config, &state, &initial_values);
+        assert!(!output.prompt.contains("1.96.1"));
+
+        let mut active_prompt = Some(ActivePrompt {
+            generation: 2,
+            state,
+            config,
+            config_generation,
+            output,
+        });
+        let finished_at = Instant::now();
+        let result = JobResult {
+            generation: 1,
+            key: key.clone(),
+            started_at: finished_at,
+            finished_at,
+            outcome: JobOutcome::Completed(AsyncJobSegments {
+                segments: vec![AsyncJobSegment {
+                    key,
+                    content: Ok(Some(SegmentContent::new(
+                        "rust_version",
+                        "1.96.1",
+                        Default::default(),
+                    ))),
+                }],
+            }),
+        };
+        let mut response = Vec::new();
+
+        handle_job_result(result, &mut cache, &mut response, &mut active_prompt)
+            .expect("job result should be handled");
+
+        let encoded = String::from_utf8(response).expect("response should be utf8");
+        let frame = encoded.trim_end_matches('\x1e');
+        let WorkerRecord::Update {
+            generation,
+            status,
+            output,
+        } = decode_worker_record(frame).expect("update should decode")
+        else {
+            panic!("expected update response");
+        };
+
+        assert_eq!(generation, 2);
+        assert_eq!(status, RenderStatus::Final);
+        assert!(output.prompt.contains("1.96.1"));
+    }
+
+    #[test]
+    fn empty_job_result_updates_cache_without_changing_output() {
+        let tempdir = tempfile::tempdir().expect("tempdir should be created");
+        std::fs::write(
+            tempdir.path().join("Cargo.toml"),
+            "[package]\nname = \"demo\"\n",
+        )
+        .expect("Cargo.toml should be written");
+        let config = Config::from_toml(
+            r#"
+            [layout]
+            lines = 2
+
+            [layout.line1]
+            left = ["rust_version"]
+            right = []
+
+            [layout.line2]
+            left = ["prompt_char"]
+            right = []
+            "#,
+        )
+        .expect("config should parse");
+        let config_generation = 1;
+        let state = PromptState {
+            cwd: tempdir.path().to_path_buf(),
+            exit_status: 0,
+            duration_ms: None,
+            time: None,
+            columns: 120,
+            keymap: Default::default(),
+            env: Default::default(),
+        };
+        let key = rust_cache_key(&state.cwd, None, config_generation)
+            .expect("rust cache key should be available");
+        let mut cache = SegmentCache::new(4);
+        let initial_values = async_values(&cache, &state, &config, config_generation);
+        let output = render_with_async(&config, &state, &initial_values);
+
+        let mut active_prompt = Some(ActivePrompt {
+            generation: 2,
+            state,
+            config,
+            config_generation,
+            output: output.clone(),
+        });
+        let finished_at = Instant::now();
+        let result = JobResult {
+            generation: 1,
+            key: key.clone(),
+            started_at: finished_at,
+            finished_at,
+            outcome: JobOutcome::Completed(AsyncJobSegments {
+                segments: vec![AsyncJobSegment {
+                    key,
+                    content: Ok(None),
+                }],
+            }),
+        };
+        let mut response = Vec::new();
+
+        handle_job_result(result, &mut cache, &mut response, &mut active_prompt)
+            .expect("job result should be handled");
+
+        assert!(response.is_empty());
+        let active_prompt = active_prompt.expect("active prompt should remain");
+        assert_eq!(active_prompt.output, output);
+        let async_values = async_values(
+            &cache,
+            &active_prompt.state,
+            &active_prompt.config,
+            active_prompt.config_generation,
+        );
+        assert_eq!(
+            async_values.get("rust_version"),
+            Some(&AsyncValue::Ready(None))
         );
     }
 }

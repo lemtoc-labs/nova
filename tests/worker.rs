@@ -226,6 +226,86 @@ fn worker_sends_update_when_rust_version_finishes() {
 }
 
 #[test]
+fn worker_omits_missing_rust_command_without_update() {
+    let _guard = worker_test_lock();
+    let tempdir = tempfile::tempdir().expect("tempdir should be created");
+    let runtime_dir = tempdir.path().join("runtime");
+    fs::create_dir(&runtime_dir).expect("runtime dir should be created");
+    create_fifo(runtime_dir.join("req"));
+    create_fifo(runtime_dir.join("resp"));
+
+    let project = tempdir.path().join("project");
+    fs::create_dir(&project).expect("project dir should be created");
+    fs::write(project.join("Cargo.toml"), "[package]\nname = \"demo\"\n")
+        .expect("Cargo.toml should be written");
+
+    let config_path = tempdir.path().join("nova.toml");
+    fs::write(
+        &config_path,
+        r#"
+        [layout]
+        lines = 2
+
+        [layout.line1]
+        left = ["dir", "rust_version"]
+        right = []
+
+        [layout.line2]
+        left = ["prompt_char"]
+        right = []
+        "#,
+    )
+    .expect("config should be written");
+
+    let missing_bin = tempdir.path().join("missing-bin");
+    fs::create_dir(&missing_bin).expect("missing bin dir should be created");
+
+    let mut child = StdCommand::new(cargo_bin("nova"))
+        .arg("worker")
+        .arg("--dir")
+        .arg(&runtime_dir)
+        .arg("--session-token")
+        .arg("test-token")
+        .env("NOVA_CONFIG", &config_path)
+        .spawn()
+        .expect("worker should spawn");
+
+    let mut request = open_fifo_write(runtime_dir.join("req"));
+    let mut response = WorkerReader::new(open_fifo_read(runtime_dir.join("resp")));
+
+    assert_eq!(
+        read_worker_record(&mut response),
+        WorkerRecord::Handshake {
+            session_token: "test-token".to_string()
+        }
+    );
+
+    write_render_request_with_env(
+        &mut request,
+        1,
+        project,
+        160,
+        PromptEnv {
+            path: Some(missing_bin.to_string_lossy().into_owned()),
+            ..PromptEnv::default()
+        },
+    );
+    let (first_status, first_output) = read_prompt_response(&mut response, 1);
+    assert_eq!(first_status, RenderStatus::Partial);
+    assert!(
+        !first_output.prompt.contains(""),
+        "first render should not include missing rust version: {}",
+        first_output.prompt
+    );
+
+    assert_no_worker_record(&mut response, Duration::from_millis(200));
+
+    drop(request);
+    drop(response);
+    assert_worker_exits(&mut child);
+}
+
+#[test]
 fn worker_sends_update_when_node_version_finishes() {
     let _guard = worker_test_lock();
     let tempdir = tempfile::tempdir().expect("tempdir should be created");
@@ -1239,13 +1319,14 @@ fn read_prompt_response(
     response: &mut WorkerReader,
     expected_generation: u64,
 ) -> (RenderStatus, nova::render::LoweredPrompt) {
+    let record = read_worker_record(response);
     let WorkerRecord::Prompt {
         generation,
         status,
         output,
-    } = read_worker_record(response)
+    } = record
     else {
-        panic!("expected prompt response");
+        panic!("expected prompt response, got {record:?}");
     };
 
     assert_eq!(generation, expected_generation);
@@ -1263,13 +1344,14 @@ fn read_update_response(
     response: &mut WorkerReader,
     expected_generation: u64,
 ) -> (RenderStatus, nova::render::LoweredPrompt) {
+    let record = read_worker_record(response);
     let WorkerRecord::Update {
         generation,
         status,
         output,
-    } = read_worker_record(response)
+    } = record
     else {
-        panic!("expected update response");
+        panic!("expected update response, got {record:?}");
     };
 
     assert_eq!(generation, expected_generation);
@@ -1322,8 +1404,7 @@ fn read_worker_record(reader: &mut WorkerReader) -> WorkerRecord {
         match reader.response.read(&mut buffer) {
             Ok(0) => {}
             Ok(bytes_read) => {
-                let chunk = String::from_utf8_lossy(&buffer[..bytes_read]);
-                for frame in reader.decoder.push(&chunk) {
+                for frame in reader.decoder.push(&buffer[..bytes_read]) {
                     reader.pending.push_back(
                         decode_worker_record(&frame).expect("worker record should decode"),
                     );
@@ -1356,8 +1437,12 @@ fn assert_no_worker_record(reader: &mut WorkerReader, timeout: Duration) {
         match reader.response.read(&mut buffer) {
             Ok(0) => {}
             Ok(bytes_read) => {
-                let chunk = String::from_utf8_lossy(&buffer[..bytes_read]);
-                if let Some(frame) = reader.decoder.push(&chunk).into_iter().next() {
+                if let Some(frame) = reader
+                    .decoder
+                    .push(&buffer[..bytes_read])
+                    .into_iter()
+                    .next()
+                {
                     let record = decode_worker_record(&frame).expect("worker record should decode");
                     panic!("unexpected worker record: {record:?}");
                 }

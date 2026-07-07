@@ -10,6 +10,7 @@ use crate::state::{AwsEnv, Keymap, PromptEnv, PromptState};
 pub const VERSION: &str = "6";
 const FIELD_SEPARATOR: char = '\0';
 const RECORD_SEPARATOR: char = '\x1e';
+const RECORD_SEPARATOR_BYTE: u8 = b'\x1e';
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RenderRequest {
@@ -69,16 +70,20 @@ pub enum ProtocolError {
 
 #[derive(Default)]
 pub struct FrameDecoder {
-    buffer: String,
+    buffer: Vec<u8>,
 }
 
 impl FrameDecoder {
-    pub fn push(&mut self, chunk: &str) -> Vec<String> {
-        self.buffer.push_str(chunk);
+    pub fn push(&mut self, chunk: &[u8]) -> Vec<String> {
+        self.buffer.extend_from_slice(chunk);
 
         let mut frames = Vec::new();
-        while let Some(position) = self.buffer.find(RECORD_SEPARATOR) {
-            let record = self.buffer[..position].to_string();
+        while let Some(position) = self
+            .buffer
+            .iter()
+            .position(|byte| *byte == RECORD_SEPARATOR_BYTE)
+        {
+            let record = String::from_utf8_lossy(&self.buffer[..position]).into_owned();
             self.buffer.drain(..=position);
             frames.push(record);
         }
@@ -594,9 +599,10 @@ mod tests {
             "{}{}",
             encode_client_record(&first),
             encode_client_record(&second)
-        );
+        )
+        .into_bytes();
 
-        for split_at in 0..combined.len() {
+        for split_at in 0..=combined.len() {
             let mut decoder = FrameDecoder::default();
             let mut frames = decoder.push(&combined[..split_at]);
             frames.extend(decoder.push(&combined[split_at..]));
@@ -604,6 +610,32 @@ mod tests {
             assert_eq!(frames.len(), 2);
             assert_eq!(decode_client_record(&frames[0]), Ok(first.clone()));
             assert_eq!(decode_client_record(&frames[1]), Ok(second.clone()));
+        }
+    }
+
+    #[test]
+    fn decodes_utf8_frame_split_at_any_byte_boundary() {
+        let record = ClientRecord::Render(RenderRequest {
+            generation: 3,
+            state: PromptState {
+                cwd: PathBuf::from("/tmp/日本語/nova"),
+                exit_status: 0,
+                duration_ms: None,
+                time: None,
+                columns: 80,
+                keymap: Keymap::Main,
+                env: PromptEnv::default(),
+            },
+        });
+        let encoded = encode_client_record(&record).into_bytes();
+
+        for split_at in 0..=encoded.len() {
+            let mut decoder = FrameDecoder::default();
+            let mut frames = decoder.push(&encoded[..split_at]);
+            frames.extend(decoder.push(&encoded[split_at..]));
+
+            assert_eq!(frames.len(), 1);
+            assert_eq!(decode_client_record(&frames[0]), Ok(record.clone()));
         }
     }
 

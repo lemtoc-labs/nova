@@ -270,37 +270,10 @@ fn collect_rust_version_with_command_and_path(
         return Ok(None);
     };
     let timeout = remaining_time(deadline)?;
-    let mut command = runtime_command(command, path);
-    let mut child = command
-        .args(RUSTC_ARGS)
-        .current_dir(root)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()
-        .map_err(RuntimeCollectError::Spawn)?;
-    let stdout = child
-        .stdout
-        .take()
-        .ok_or(RuntimeCollectError::MissingStdout)?;
-    let stdout_reader = read_stdout(stdout);
-
-    let status = match child
-        .wait_timeout(timeout)
-        .map_err(RuntimeCollectError::Wait)?
-    {
-        Some(status) => status,
-        None => {
-            let _ = child.kill();
-            let _ = child.wait();
-            let _ = stdout_reader.join();
-            return Err(RuntimeCollectError::TimedOut);
-        }
-    };
-    let output = join_stdout(stdout_reader)?;
-
-    if !status.success() {
+    let Some(output) = collect_optional_command_output(command, RUSTC_ARGS, &root, timeout, path)?
+    else {
         return Ok(None);
-    }
+    };
 
     Ok(parse_rustc_version(&String::from_utf8_lossy(&output)))
 }
@@ -325,7 +298,10 @@ fn collect_node_version_with_command_and_path(
     }
 
     let timeout = remaining_time(deadline)?;
-    let output = collect_command_output(command, NODE_ARGS, cwd, timeout, path)?;
+    let Some(output) = collect_optional_command_output(command, NODE_ARGS, cwd, timeout, path)?
+    else {
+        return Ok(None);
+    };
 
     Ok(parse_node_version(&String::from_utf8_lossy(&output)))
 }
@@ -350,7 +326,10 @@ fn collect_bun_version_with_command_and_path(
     }
 
     let timeout = remaining_time(deadline)?;
-    let output = collect_command_output(command, BUN_ARGS, cwd, timeout, path)?;
+    let Some(output) = collect_optional_command_output(command, BUN_ARGS, cwd, timeout, path)?
+    else {
+        return Ok(None);
+    };
 
     Ok(parse_bun_version(&String::from_utf8_lossy(&output)))
 }
@@ -375,7 +354,10 @@ fn collect_deno_version_with_command_and_path(
     }
 
     let timeout = remaining_time(deadline)?;
-    let output = collect_command_output(command, DENO_ARGS, cwd, timeout, path)?;
+    let Some(output) = collect_optional_command_output(command, DENO_ARGS, cwd, timeout, path)?
+    else {
+        return Ok(None);
+    };
 
     Ok(parse_deno_version(&String::from_utf8_lossy(&output)))
 }
@@ -458,6 +440,22 @@ fn collect_command_output(
     }
 
     Ok(output)
+}
+
+fn collect_optional_command_output(
+    command: &Path,
+    args: &[&str],
+    cwd: &Path,
+    timeout: Duration,
+    path: Option<&str>,
+) -> Result<Option<Vec<u8>>, RuntimeCollectError> {
+    match collect_command_output(command, args, cwd, timeout, path) {
+        Ok(output) => Ok(Some(output)),
+        Err(RuntimeCollectError::Spawn(error)) if error.kind() == std::io::ErrorKind::NotFound => {
+            Ok(None)
+        }
+        Err(error) => Err(error),
+    }
 }
 
 pub fn parse_rustc_version(output: &str) -> Option<String> {

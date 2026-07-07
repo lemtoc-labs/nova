@@ -87,6 +87,8 @@ pub enum GitCollectError {
     ReaderPanicked,
     #[error("failed to capture git status output")]
     MissingStdout,
+    #[error("git status exited unsuccessfully")]
+    NonZeroExit,
 }
 
 pub fn git_cache_key(cwd: &Path, config_generation: u64) -> Option<CacheKey> {
@@ -123,6 +125,10 @@ fn collect_git_status_with_command(
     deadline: Instant,
     command: &Path,
 ) -> Result<Option<GitStatus>, GitCollectError> {
+    if find_repository_root(cwd).is_none() {
+        return Ok(None);
+    }
+
     let timeout = remaining_time(deadline)?;
     let mut child = Command::new(command)
         .args(GIT_STATUS_ARGS)
@@ -146,7 +152,7 @@ fn collect_git_status_with_command(
     let output = join_stdout(stdout_reader)?;
 
     if !status.success() {
-        return Ok(None);
+        return Err(GitCollectError::NonZeroExit);
     }
 
     Ok(Some(parse_porcelain_v2_z(&output)))
@@ -745,6 +751,7 @@ u UU N... 000000 000000 000000 100644 100644 100644 abc123 def456 ghi789 conflic
         use std::os::unix::fs::PermissionsExt;
 
         let dir = tempfile::tempdir()?;
+        init_repo(dir.path())?;
         let fake_git = dir.path().join("git");
         std::fs::write(&fake_git, "#!/bin/sh\nsleep 2\n")?;
         let mut permissions = std::fs::metadata(&fake_git)?.permissions();
@@ -759,6 +766,28 @@ u UU N... 000000 000000 000000 100644 100644 100644 abc123 def456 ghi789 conflic
         .expect_err("slow git command should time out");
 
         assert!(matches!(error, GitCollectError::TimedOut));
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn collector_errors_on_failed_git_command() -> Result<(), Box<dyn std::error::Error>> {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir()?;
+        init_repo(dir.path())?;
+        let fake_git = dir.path().join("git");
+        std::fs::write(&fake_git, "#!/bin/sh\nexit 1\n")?;
+        let mut permissions = std::fs::metadata(&fake_git)?.permissions();
+        permissions.set_mode(0o755);
+        std::fs::set_permissions(&fake_git, permissions)?;
+
+        collect_git_status_with_command(
+            dir.path(),
+            Instant::now() + Duration::from_secs(1),
+            &fake_git,
+        )
+        .expect_err("failed git command should be an error");
         Ok(())
     }
 

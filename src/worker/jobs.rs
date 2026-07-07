@@ -46,7 +46,10 @@ impl<T> JobPool<T>
 where
     T: Send + 'static,
 {
-    pub fn new(max_concurrency: usize, results: mpsc::Sender<JobResult<T>>) -> Self {
+    pub fn new<E>(max_concurrency: usize, results: mpsc::Sender<E>) -> Self
+    where
+        E: From<JobResult<T>> + Send + 'static,
+    {
         let worker_count = max_concurrency.max(1);
         let (sender, receiver) = mpsc::channel::<Job<T>>();
         let receiver = Arc::new(Mutex::new(receiver));
@@ -95,12 +98,13 @@ impl<T> Drop for JobPool<T> {
     }
 }
 
-fn spawn_worker<T>(
+fn spawn_worker<T, E>(
     receiver: Arc<Mutex<mpsc::Receiver<Job<T>>>>,
-    results: mpsc::Sender<JobResult<T>>,
+    results: mpsc::Sender<E>,
 ) -> JoinHandle<()>
 where
     T: Send + 'static,
+    E: From<JobResult<T>> + Send + 'static,
 {
     thread::spawn(move || {
         loop {
@@ -129,7 +133,7 @@ where
                 outcome,
             };
 
-            if results.send(result).is_err() {
+            if results.send(result.into()).is_err() {
                 return;
             }
         }
@@ -146,7 +150,7 @@ mod tests {
 
     #[test]
     fn executes_jobs_and_sends_results() -> Result<(), Box<dyn std::error::Error>> {
-        let (results, receiver) = mpsc::channel();
+        let (results, receiver) = mpsc::channel::<JobResult<String>>();
         let pool = JobPool::new(2, results);
         let key = key("/repo");
 
@@ -164,7 +168,7 @@ mod tests {
 
     #[test]
     fn provides_a_deadline_to_jobs() -> Result<(), Box<dyn std::error::Error>> {
-        let (results, receiver) = mpsc::channel();
+        let (results, receiver) = mpsc::channel::<JobResult<bool>>();
         let pool = JobPool::new(1, results);
 
         pool.spawn(1, key("/repo"), Duration::from_secs(1), |deadline| {
@@ -177,8 +181,37 @@ mod tests {
     }
 
     #[test]
+    fn converts_job_results_for_custom_event_channels() -> Result<(), Box<dyn std::error::Error>> {
+        #[derive(Debug, PartialEq, Eq)]
+        struct TestEvent(JobResult<String>);
+
+        impl From<JobResult<String>> for TestEvent {
+            fn from(result: JobResult<String>) -> Self {
+                Self(result)
+            }
+        }
+
+        let (events, receiver) = mpsc::channel::<TestEvent>();
+        let pool = JobPool::new(1, events);
+        let key = key("/repo");
+
+        pool.spawn(3, key.clone(), Duration::from_secs(1), |_deadline| {
+            "converted".to_string()
+        })?;
+
+        let event = receiver.recv_timeout(Duration::from_secs(1))?;
+        assert_eq!(event.0.generation, 3);
+        assert_eq!(event.0.key, key);
+        assert_eq!(
+            event.0.outcome,
+            JobOutcome::Completed("converted".to_string())
+        );
+        Ok(())
+    }
+
+    #[test]
     fn catches_panics_and_keeps_worker_alive() -> Result<(), Box<dyn std::error::Error>> {
-        let (results, receiver) = mpsc::channel();
+        let (results, receiver) = mpsc::channel::<JobResult<String>>();
         let pool = JobPool::new(1, results);
 
         pool.spawn(
@@ -206,7 +239,7 @@ mod tests {
 
     #[test]
     fn respects_max_concurrency_one() -> Result<(), Box<dyn std::error::Error>> {
-        let (results, receiver) = mpsc::channel();
+        let (results, receiver) = mpsc::channel::<JobResult<String>>();
         let pool = JobPool::new(1, results);
         let (first_started, wait_for_release) = mpsc::channel();
         let (release_first, first_release) = mpsc::channel();
