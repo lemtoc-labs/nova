@@ -10,11 +10,13 @@
 # git_branch, git_status, nix_shell, node_version, prompt_char,
 # python_version, rust_version, ssh, time, user_host.
 #
-# Style keys accepted by `style` and `error_style`:
+# Style keys accepted by `style`, `error_style`, and `prefix_style`:
 # fg, bg, bold.
 #
 # Supported colors:
 # black, red, green, yellow, blue, magenta, cyan, white.
+# bright_black, bright_red, bright_green, bright_yellow, bright_blue,
+# bright_magenta, bright_cyan, bright_white.
 #
 # Icon keys accept an empty string to hide the icon, for example:
 # icon = ""
@@ -135,7 +137,11 @@ style = { fg = "yellow", bold = true }
 [segments.duration]
 # Hide command duration below this threshold. Rendered as +999ms, +1.1s, +2s.
 min_ms = 2000
-style = { fg = "white", bold = false }
+# Prefix is a literal string. Use "took " for took 2s or "" for 2s.
+prefix = "+"
+# prefix_style defaults to style when omitted.
+prefix_style = { fg = "bright_white", bold = false }
+style = { fg = "bright_white", bold = false }
 
 [segments.time]
 style = { fg = "white", bold = false }

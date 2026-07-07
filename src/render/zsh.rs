@@ -74,6 +74,14 @@ fn fg_code(color: &str) -> Option<&'static str> {
         "magenta" => Some("35"),
         "cyan" => Some("36"),
         "white" => Some("37"),
+        "bright_black" => Some("90"),
+        "bright_red" => Some("91"),
+        "bright_green" => Some("92"),
+        "bright_yellow" => Some("93"),
+        "bright_blue" => Some("94"),
+        "bright_magenta" => Some("95"),
+        "bright_cyan" => Some("96"),
+        "bright_white" => Some("97"),
         _ => None,
     }
 }
@@ -88,6 +96,14 @@ fn bg_code(color: &str) -> Option<&'static str> {
         "magenta" => Some("45"),
         "cyan" => Some("46"),
         "white" => Some("47"),
+        "bright_black" => Some("100"),
+        "bright_red" => Some("101"),
+        "bright_green" => Some("102"),
+        "bright_yellow" => Some("103"),
+        "bright_blue" => Some("104"),
+        "bright_magenta" => Some("105"),
+        "bright_cyan" => Some("106"),
+        "bright_white" => Some("107"),
         _ => None,
     }
 }
@@ -134,6 +150,24 @@ mod tests {
         assert_eq!(
             lower_segment(&segment),
             "%{\u{1b}[32m%}nova%{\u{1b}[0m%}@M4Pro"
+        );
+    }
+
+    #[test]
+    fn lowers_bright_ansi_colors() {
+        let segment = SegmentContent::new(
+            "test",
+            "bright",
+            Style {
+                fg: Some("bright_white".to_string()),
+                bg: Some("bright_blue".to_string()),
+                bold: false,
+            },
+        );
+
+        assert_eq!(
+            lower_segment(&segment),
+            "%{\u{1b}[97;104m%}bright%{\u{1b}[0m%}"
         );
     }
 }

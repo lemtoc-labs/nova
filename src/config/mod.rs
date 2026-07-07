@@ -61,10 +61,12 @@ pub struct SegmentConfig {
     pub icons: BTreeMap<String, String>,
     pub max_components: Option<usize>,
     pub min_ms: Option<u64>,
+    pub prefix: Option<String>,
     pub ttl_ms: Option<u64>,
     pub timeout_ms: Option<u64>,
     pub style: StyleConfig,
     pub error_style: StyleConfig,
+    pub prefix_style: StyleConfig,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Eq)]
@@ -237,6 +239,10 @@ mod tests {
             characters = { vi_command = "%" }
             error_style = { fg = "red", bold = true }
 
+            [segments.duration]
+            prefix = "took "
+            prefix_style = { fg = "cyan", bold = true }
+
             [segments.git_status]
             icons = { staged = "S", untracked = "U", stash = "T" }
             "#,
@@ -245,6 +251,7 @@ mod tests {
 
         let dir = config.segment("dir");
         let prompt_char = config.segment("prompt_char");
+        let duration = config.segment("duration");
         let git_status = config.segment("git_status");
         assert_eq!(config.layout.lines, 1);
         assert_eq!(dir.icon.as_deref(), Some("d"));
@@ -260,6 +267,9 @@ mod tests {
         );
         assert_eq!(prompt_char.error_style.fg.as_deref(), Some("red"));
         assert!(prompt_char.error_style.bold);
+        assert_eq!(duration.prefix.as_deref(), Some("took "));
+        assert_eq!(duration.prefix_style.fg.as_deref(), Some("cyan"));
+        assert!(duration.prefix_style.bold);
         assert_eq!(
             git_status.icons.get("staged").map(String::as_str),
             Some("S")
