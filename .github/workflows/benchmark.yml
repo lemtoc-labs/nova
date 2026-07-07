@@ -1,0 +1,69 @@
+name: Zsh Benchmark (Self-hosted)
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+concurrency:
+  group: zsh-benchmark-self-hosted
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  benchmark:
+    name: Zsh Interactive Latency
+    runs-on: [self-hosted, nova-bench]
+    timeout-minutes: 30
+    env:
+      NOVA_ZSH_BENCH_ITERS: 16
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Add local tool paths
+        run: |
+          {
+            echo "$HOME/.local/share/mise/shims"
+            echo "$HOME/.nix-profile/bin"
+            echo "/etc/profiles/per-user/$USER/bin"
+            echo "/run/current-system/sw/bin"
+            echo "/nix/var/nix/profiles/default/bin"
+            echo "/opt/homebrew/bin"
+            echo "/opt/homebrew/sbin"
+          } >> "$GITHUB_PATH"
+
+      - uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
+        with:
+          toolchain: stable
+
+      - name: Build release binary
+        run: cargo build --release
+
+      - name: Install zsh-bench
+        run: .github/scripts/install-zsh-bench.sh "$RUNNER_TEMP/zsh-bench"
+
+      - name: Run zsh benchmark
+        env:
+          NOVA_ZSH_BENCH: ${{ runner.temp }}/zsh-bench/zsh-bench
+        run: scripts/bench-zsh > zsh-bench-result.txt
+
+      - name: Convert benchmark result
+        run: .github/scripts/convert-zsh-bench.sh zsh-bench-result.txt benchmark-result.json
+
+      - name: Render benchmark summary
+        run: .github/scripts/render-zsh-bench-comment.sh benchmark-result.json zsh-bench-summary.md
+
+      - name: Write benchmark summary
+        run: cat zsh-bench-summary.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Fail on red zsh-bench metrics
+        run: .github/scripts/check-zsh-bench-thresholds.sh benchmark-result.json
+
+      - name: Clean benchmark temporary files
+        if: always()
+        run: |
+          rm -rf "$RUNNER_TEMP/zsh-bench"
+          rm -f zsh-bench-result.txt benchmark-result.json zsh-bench-summary.md
