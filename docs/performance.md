@@ -106,3 +106,7 @@ The self-hosted workflow is intentionally not a pull request trigger while the
 runner is manually started. This avoids leaving ordinary PRs pending when the
 local runner is offline. Start the Nova runner with `./run.sh` when a fixed
 benchmark is needed, then trigger the workflow from GitHub Actions.
+
+The self-hosted workflow stores benchmark history in the `gh-pages` branch under
+`bench/zsh`. Configure GitHub Pages to publish from the `gh-pages` branch root;
+the dashboard is then available at `/nova/bench/zsh/`.
