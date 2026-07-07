@@ -1321,13 +1321,14 @@ fn read_prompt_response(
     response: &mut WorkerReader,
     expected_generation: u64,
 ) -> (RenderStatus, nova::render::LoweredPrompt) {
+    let record = read_worker_record(response);
     let WorkerRecord::Prompt {
         generation,
         status,
         output,
-    } = read_worker_record(response)
+    } = record
     else {
-        panic!("expected prompt response");
+        panic!("expected prompt response, got {record:?}");
     };
 
     assert_eq!(generation, expected_generation);
@@ -1345,13 +1346,14 @@ fn read_update_response(
     response: &mut WorkerReader,
     expected_generation: u64,
 ) -> (RenderStatus, nova::render::LoweredPrompt) {
+    let record = read_worker_record(response);
     let WorkerRecord::Update {
         generation,
         status,
         output,
-    } = read_worker_record(response)
+    } = record
     else {
-        panic!("expected update response");
+        panic!("expected update response, got {record:?}");
     };
 
     assert_eq!(generation, expected_generation);
