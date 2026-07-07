@@ -476,7 +476,9 @@ enum Event {
   pool.
 - The main loop is the only writer to the `resp` FIFO and the only owner of
   the cache — no locks anywhere.
-- On each request: `stat` the config file (mtime + size) and reload on change;
+- Config discovery (`$NOVA_CONFIG`, `$XDG_CONFIG_HOME`, `$HOME`) is resolved
+  once when the worker starts. On each request the worker `stat`s that resolved
+  config path (mtime + size) and reparses only when the fingerprint changes;
   render; reply; schedule refresh jobs for stale/missing async segments.
 
 ## zsh Adapter

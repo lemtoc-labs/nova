@@ -6,6 +6,7 @@ pub mod load;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::Path;
+use std::sync::LazyLock;
 
 use serde::Deserialize;
 
@@ -30,6 +31,7 @@ const KNOWN_SEGMENTS: &[&str] = &[
     "user_host",
 ];
 pub const DEFAULT_INITIAL_WAIT_MS: u64 = 0;
+static DEFAULT_SEGMENT_CONFIG: LazyLock<SegmentConfig> = LazyLock::new(SegmentConfig::default);
 
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Eq)]
 #[serde(default)]
@@ -117,8 +119,8 @@ impl Config {
         }
     }
 
-    pub fn segment(&self, id: &str) -> SegmentConfig {
-        self.segments.get(id).cloned().unwrap_or_default()
+    pub fn segment(&self, id: &str) -> &SegmentConfig {
+        self.segments.get(id).unwrap_or(&DEFAULT_SEGMENT_CONFIG)
     }
 
     pub fn warnings(&self) -> Vec<ConfigWarning> {
