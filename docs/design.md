@@ -443,8 +443,8 @@ Owned by the worker. One layer for now.
   cwd, the config generation, and segment-relevant markers (lockfile paths,
   profile names).
 - Value carries `collected_at` and the config generation.
-- Bounded at 128 entries. Eviction: drop the oldest `collected_at` when full.
-  (A true LRU is an optional upgrade; do not start there.)
+- Bounded at 128 entries. Eviction drops the least recently used entry; cache
+  reads touch `last_used` while freshness still uses `collected_at`.
 - **Stale-while-revalidate**: an expired entry still renders as `Stale` while
   a refresh job runs.
 - **Inflight set**: a `HashSet<CacheKey>` prevents duplicate concurrent jobs

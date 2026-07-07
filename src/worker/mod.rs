@@ -306,7 +306,7 @@ fn complete_job_result(result: JobResult<AsyncJobSegments>, cache: &mut SegmentC
 }
 
 fn write_update_if_active(
-    cache: &SegmentCache,
+    cache: &mut SegmentCache,
     response: &mut impl Write,
     active_prompt: &mut Option<ActivePrompt>,
 ) -> Result<(), WorkerError> {
@@ -423,7 +423,7 @@ fn warn_config_warnings(config: &Config, warned_config_warnings: &mut BTreeSet<C
 }
 
 fn async_values(
-    cache: &SegmentCache,
+    cache: &mut SegmentCache,
     state: &PromptState,
     config: &Config,
     config_generation: u64,
@@ -1193,7 +1193,7 @@ mod tests {
         let key = rust_cache_key(&state.cwd, None, config_generation)
             .expect("rust cache key should be available");
         let mut cache = SegmentCache::new(4);
-        let initial_values = async_values(&cache, &state, &config, config_generation);
+        let initial_values = async_values(&mut cache, &state, &config, config_generation);
         let output = render_with_async(&config, &state, &initial_values);
         assert!(!output.prompt.contains("1.96.1"));
 
@@ -1291,7 +1291,7 @@ mod tests {
             Instant::now(),
         );
 
-        let initial_values = async_values(&cache, &state, &config, config_generation);
+        let initial_values = async_values(&mut cache, &state, &config, config_generation);
         let output = render_with_async(&config, &state, &initial_values);
         assert_eq!(render_status(&config, &initial_values), RenderStatus::Final);
         assert!(output.prompt.contains("1.95.0"));
@@ -1377,7 +1377,7 @@ mod tests {
         let key = rust_cache_key(&state.cwd, None, config_generation)
             .expect("rust cache key should be available");
         let mut cache = SegmentCache::new(4);
-        let initial_values = async_values(&cache, &state, &config, config_generation);
+        let initial_values = async_values(&mut cache, &state, &config, config_generation);
         let output = render_with_async(&config, &state, &initial_values);
 
         let mut active_prompt = Some(ActivePrompt {
@@ -1409,7 +1409,7 @@ mod tests {
         let active_prompt = active_prompt.expect("active prompt should remain");
         assert_eq!(active_prompt.output, output);
         let async_values = async_values(
-            &cache,
+            &mut cache,
             &active_prompt.state,
             &active_prompt.config,
             active_prompt.config_generation,
