@@ -37,7 +37,7 @@ cargo run -- check --config examples/config.toml
 Validate release distribution metadata:
 
 ```sh
-dist plan --allow-dirty
+dist plan
 nix build .#nova --no-link
 ```
 
