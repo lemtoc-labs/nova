@@ -206,7 +206,6 @@ fn handle_request_chunk(
             config: config.clone(),
             config_generation: worker_config.generation,
             output,
-            status,
         });
         schedule_async_refreshes(
             job_pool,
@@ -228,7 +227,6 @@ struct ActivePrompt {
     config: Config,
     config_generation: u64,
     output: LoweredPrompt,
-    status: RenderStatus,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -304,10 +302,10 @@ fn write_update_if_active(
         active_prompt.config_generation,
     );
     let output = render_with_async(&active_prompt.config, &active_prompt.state, &async_values);
-    let status = render_status(&active_prompt.config, &async_values);
-    if output == active_prompt.output && status == active_prompt.status {
+    if output == active_prompt.output {
         return Ok(());
     }
+    let status = render_status(&active_prompt.config, &async_values);
 
     write_record(
         response,
@@ -318,7 +316,6 @@ fn write_update_if_active(
         },
     )?;
     active_prompt.output = output;
-    active_prompt.status = status;
     Ok(())
 }
 
@@ -1050,9 +1047,7 @@ mod tests {
         let mut cache = SegmentCache::new(4);
         let initial_values = async_values(&cache, &state, &config, config_generation);
         let output = render_with_async(&config, &state, &initial_values);
-        let status = render_status(&config, &initial_values);
         assert!(!output.prompt.contains("1.96.1"));
-        assert_eq!(status, RenderStatus::Partial);
 
         let mut active_prompt = Some(ActivePrompt {
             generation: 2,
@@ -1060,7 +1055,6 @@ mod tests {
             config,
             config_generation,
             output,
-            status,
         });
         let finished_at = Instant::now();
         let result = JobResult {
@@ -1101,7 +1095,7 @@ mod tests {
     }
 
     #[test]
-    fn empty_job_result_updates_status_without_changing_output() {
+    fn empty_job_result_updates_cache_without_changing_output() {
         let tempdir = tempfile::tempdir().expect("tempdir should be created");
         std::fs::write(
             tempdir.path().join("Cargo.toml"),
@@ -1138,8 +1132,6 @@ mod tests {
         let mut cache = SegmentCache::new(4);
         let initial_values = async_values(&cache, &state, &config, config_generation);
         let output = render_with_async(&config, &state, &initial_values);
-        let status = render_status(&config, &initial_values);
-        assert_eq!(status, RenderStatus::Partial);
 
         let mut active_prompt = Some(ActivePrompt {
             generation: 2,
@@ -1147,7 +1139,6 @@ mod tests {
             config,
             config_generation,
             output: output.clone(),
-            status,
         });
         let finished_at = Instant::now();
         let result = JobResult {
@@ -1167,19 +1158,18 @@ mod tests {
         handle_job_result(result, &mut cache, &mut response, &mut active_prompt)
             .expect("job result should be handled");
 
-        let encoded = String::from_utf8(response).expect("response should be utf8");
-        let frame = encoded.trim_end_matches('\x1e');
-        let WorkerRecord::Update {
-            generation,
-            status,
-            output: updated_output,
-        } = decode_worker_record(frame).expect("update should decode")
-        else {
-            panic!("expected update response");
-        };
-
-        assert_eq!(generation, 2);
-        assert_eq!(status, RenderStatus::Final);
-        assert_eq!(updated_output, output);
+        assert!(response.is_empty());
+        let active_prompt = active_prompt.expect("active prompt should remain");
+        assert_eq!(active_prompt.output, output);
+        let async_values = async_values(
+            &cache,
+            &active_prompt.state,
+            &active_prompt.config,
+            active_prompt.config_generation,
+        );
+        assert_eq!(
+            async_values.get("rust_version"),
+            Some(&AsyncValue::Ready(None))
+        );
     }
 }

@@ -226,7 +226,7 @@ fn worker_sends_update_when_rust_version_finishes() {
 }
 
 #[test]
-fn worker_sends_final_update_when_rust_command_is_missing() {
+fn worker_omits_missing_rust_command_without_update() {
     let _guard = worker_test_lock();
     let tempdir = tempfile::tempdir().expect("tempdir should be created");
     let runtime_dir = tempdir.path().join("runtime");
@@ -298,9 +298,7 @@ fn worker_sends_final_update_when_rust_command_is_missing() {
         first_output.prompt
     );
 
-    let (update_status, update_output) = read_update_response(&mut response, 1);
-    assert_eq!(update_status, RenderStatus::Final);
-    assert_eq!(update_output, first_output);
+    assert_no_worker_record(&mut response, Duration::from_millis(200));
 
     drop(request);
     drop(response);
