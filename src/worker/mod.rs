@@ -271,9 +271,8 @@ fn handle_job_result(
     response: &mut impl Write,
     active_prompt: &mut Option<ActivePrompt>,
 ) -> Result<(), WorkerError> {
-    let generation = result.generation;
     complete_job_result(result, cache);
-    write_update_if_active(generation, cache, response, active_prompt)
+    write_update_if_active(cache, response, active_prompt)
 }
 
 fn complete_job_result(result: JobResult<AsyncJobSegments>, cache: &mut SegmentCache) {
@@ -296,7 +295,6 @@ fn complete_job_result(result: JobResult<AsyncJobSegments>, cache: &mut SegmentC
 }
 
 fn write_update_if_active(
-    generation: u64,
     cache: &SegmentCache,
     response: &mut impl Write,
     active_prompt: &mut Option<ActivePrompt>,
@@ -304,9 +302,6 @@ fn write_update_if_active(
     let Some(active_prompt) = active_prompt else {
         return Ok(());
     };
-    if generation != active_prompt.generation {
-        return Ok(());
-    }
 
     let async_values = async_values(
         cache,
@@ -323,7 +318,7 @@ fn write_update_if_active(
     write_record(
         response,
         &WorkerRecord::Update {
-            generation,
+            generation: active_prompt.generation,
             status,
             output: output.clone(),
         },
@@ -873,6 +868,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::worker::protocol::decode_worker_record;
 
     #[test]
     fn segment_timeout_uses_configured_milliseconds() {
@@ -993,5 +989,90 @@ mod tests {
             render_status(&config, &AsyncSegmentValues::new()),
             RenderStatus::Final
         );
+    }
+
+    #[test]
+    fn stale_generation_job_updates_active_prompt_generation() {
+        let tempdir = tempfile::tempdir().expect("tempdir should be created");
+        std::fs::write(
+            tempdir.path().join("Cargo.toml"),
+            "[package]\nname = \"demo\"\n",
+        )
+        .expect("Cargo.toml should be written");
+        let config = Config::from_toml(
+            r#"
+            [layout]
+            lines = 2
+
+            [layout.line1]
+            left = ["rust_version"]
+            right = []
+
+            [layout.line2]
+            left = ["prompt_char"]
+            right = []
+            "#,
+        )
+        .expect("config should parse");
+        let config_generation = 1;
+        let state = PromptState {
+            cwd: tempdir.path().to_path_buf(),
+            exit_status: 0,
+            duration_ms: None,
+            time: None,
+            columns: 120,
+            keymap: Default::default(),
+            env: Default::default(),
+        };
+        let key = rust_cache_key(&state.cwd, None, config_generation)
+            .expect("rust cache key should be available");
+        let mut cache = SegmentCache::new(4);
+        let initial_values = async_values(&cache, &state, &config, config_generation);
+        let output = render_with_async(&config, &state, &initial_values);
+        assert!(!output.prompt.contains("1.96.1"));
+
+        let mut active_prompt = Some(ActivePrompt {
+            generation: 2,
+            state,
+            config,
+            config_generation,
+            output,
+        });
+        let finished_at = Instant::now();
+        let result = JobResult {
+            generation: 1,
+            key: key.clone(),
+            started_at: finished_at,
+            finished_at,
+            outcome: JobOutcome::Completed(AsyncJobSegments {
+                segments: vec![AsyncJobSegment {
+                    key,
+                    content: Some(SegmentContent::new(
+                        "rust_version",
+                        "1.96.1",
+                        Default::default(),
+                    )),
+                }],
+            }),
+        };
+        let mut response = Vec::new();
+
+        handle_job_result(result, &mut cache, &mut response, &mut active_prompt)
+            .expect("job result should be handled");
+
+        let encoded = String::from_utf8(response).expect("response should be utf8");
+        let frame = encoded.trim_end_matches('\x1e');
+        let WorkerRecord::Update {
+            generation,
+            status,
+            output,
+        } = decode_worker_record(frame).expect("update should decode")
+        else {
+            panic!("expected update response");
+        };
+
+        assert_eq!(generation, 2);
+        assert_eq!(status, RenderStatus::Final);
+        assert!(output.prompt.contains("1.96.1"));
     }
 }
