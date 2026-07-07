@@ -1,0 +1,30 @@
+#!/usr/bin/env sh
+set -eu
+
+script_dir=$(unset CDPATH; cd "$(dirname "$0")" && pwd)
+repo_root=$(unset CDPATH; cd "$script_dir/.." && pwd)
+template="$repo_root/.github/benchmark/zsh/index.html"
+data_ref="${NOVA_BENCH_DATA_REF:-origin/gh-pages:bench/zsh/data.js}"
+
+if [ ! -r "$template" ]; then
+  printf 'dashboard template not found: %s\n' "$template" >&2
+  exit 1
+fi
+
+if [ "$#" -gt 0 ]; then
+  output_dir=$1
+  mkdir -p "$output_dir"
+else
+  output_dir=$(mktemp -d "${TMPDIR:-/tmp}/nova-zsh-dashboard.XXXXXX")
+fi
+
+cp "$template" "$output_dir/index.html"
+
+if ! git -C "$repo_root" show "$data_ref" > "$output_dir/data.js"; then
+  printf 'benchmark data not found at %s\n' "$data_ref" >&2
+  printf 'run: git fetch origin gh-pages\n' >&2
+  exit 1
+fi
+
+printf 'Preview files written to: %s\n' "$output_dir"
+printf 'Open: file://%s/index.html\n' "$output_dir"

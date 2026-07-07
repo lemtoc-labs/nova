@@ -64,6 +64,9 @@ jobs:
           fail-on-alert: false
           summary-always: true
 
+      - name: Publish benchmark dashboard
+        run: .github/scripts/publish-zsh-bench-dashboard.sh .github/benchmark/zsh/index.html bench/zsh
+
       - name: Fail on red zsh-bench metrics
         run: .github/scripts/check-zsh-bench-thresholds.sh benchmark-result.json
 
