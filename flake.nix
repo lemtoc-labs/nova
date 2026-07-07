@@ -24,6 +24,7 @@
         inputs.nixpkgs.lib.genAttrs supportedSystems (
           system:
           f {
+            inherit system;
             pkgs = import inputs.nixpkgs {
               inherit system;
               overlays = [
@@ -86,8 +87,45 @@
         };
       };
 
+      packages = forEachSupportedSystem (
+        { pkgs, ... }:
+        let
+          nova = pkgs.rustPlatform.buildRustPackage {
+            pname = "nova";
+            version = "0.1.0";
+            src = ./.;
+            cargoLock.lockFile = ./Cargo.lock;
+            nativeCheckInputs = [
+              pkgs.git
+            ];
+
+            meta = {
+              description = "A fast, customizable zsh prompt renderer.";
+              homepage = "https://github.com/lemtoc-labs/nova";
+              license = pkgs.lib.licenses.mit;
+              mainProgram = "nova";
+            };
+          };
+        in
+        {
+          inherit nova;
+          default = nova;
+        }
+      );
+
+      apps = forEachSupportedSystem (
+        { system, ... }:
+        {
+          nova = {
+            type = "app";
+            program = "${self.packages.${system}.nova}/bin/nova";
+          };
+          default = self.apps.${system}.nova;
+        }
+      );
+
       devShells = forEachSupportedSystem (
-        { pkgs }:
+        { pkgs, ... }:
         {
           default = pkgs.mkShell {
             packages = with pkgs; [
@@ -115,10 +153,14 @@
               # Required by rust-analyzer
               RUST_SRC_PATH = "${pkgs.rustToolchain}/lib/rustlib/src/rust/library";
             };
+
+            shellHook = ''
+              export PATH="${pkgs.rustToolchain}/bin:$PATH"
+            '';
           };
         }
       );
 
-      formatter = forEachSupportedSystem ({ pkgs }: pkgs.nixfmt);
+      formatter = forEachSupportedSystem ({ pkgs, ... }: pkgs.nixfmt);
     };
 }
