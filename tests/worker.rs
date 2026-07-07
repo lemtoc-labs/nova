@@ -226,6 +226,88 @@ fn worker_sends_update_when_rust_version_finishes() {
 }
 
 #[test]
+fn worker_sends_final_update_when_rust_command_is_missing() {
+    let _guard = worker_test_lock();
+    let tempdir = tempfile::tempdir().expect("tempdir should be created");
+    let runtime_dir = tempdir.path().join("runtime");
+    fs::create_dir(&runtime_dir).expect("runtime dir should be created");
+    create_fifo(runtime_dir.join("req"));
+    create_fifo(runtime_dir.join("resp"));
+
+    let project = tempdir.path().join("project");
+    fs::create_dir(&project).expect("project dir should be created");
+    fs::write(project.join("Cargo.toml"), "[package]\nname = \"demo\"\n")
+        .expect("Cargo.toml should be written");
+
+    let config_path = tempdir.path().join("nova.toml");
+    fs::write(
+        &config_path,
+        r#"
+        [layout]
+        lines = 2
+
+        [layout.line1]
+        left = ["dir", "rust_version"]
+        right = []
+
+        [layout.line2]
+        left = ["prompt_char"]
+        right = []
+        "#,
+    )
+    .expect("config should be written");
+
+    let missing_bin = tempdir.path().join("missing-bin");
+    fs::create_dir(&missing_bin).expect("missing bin dir should be created");
+
+    let mut child = StdCommand::new(cargo_bin("nova"))
+        .arg("worker")
+        .arg("--dir")
+        .arg(&runtime_dir)
+        .arg("--session-token")
+        .arg("test-token")
+        .env("NOVA_CONFIG", &config_path)
+        .spawn()
+        .expect("worker should spawn");
+
+    let mut request = open_fifo_write(runtime_dir.join("req"));
+    let mut response = WorkerReader::new(open_fifo_read(runtime_dir.join("resp")));
+
+    assert_eq!(
+        read_worker_record(&mut response),
+        WorkerRecord::Handshake {
+            session_token: "test-token".to_string()
+        }
+    );
+
+    write_render_request_with_env(
+        &mut request,
+        1,
+        project,
+        160,
+        PromptEnv {
+            path: Some(missing_bin.to_string_lossy().into_owned()),
+            ..PromptEnv::default()
+        },
+    );
+    let (first_status, first_output) = read_prompt_response(&mut response, 1);
+    assert_eq!(first_status, RenderStatus::Partial);
+    assert!(
+        !first_output.prompt.contains(""),
+        "first render should not include missing rust version: {}",
+        first_output.prompt
+    );
+
+    let (update_status, update_output) = read_update_response(&mut response, 1);
+    assert_eq!(update_status, RenderStatus::Final);
+    assert_eq!(update_output, first_output);
+
+    drop(request);
+    drop(response);
+    assert_worker_exits(&mut child);
+}
+
+#[test]
 fn worker_sends_update_when_node_version_finishes() {
     let _guard = worker_test_lock();
     let tempdir = tempfile::tempdir().expect("tempdir should be created");

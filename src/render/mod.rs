@@ -140,7 +140,10 @@ fn render_segment(
 
 fn async_value_content(value: &AsyncValue) -> Option<SegmentContent> {
     match value {
-        AsyncValue::Ready(content) | AsyncValue::Stale(content) => Some(content.clone()),
+        AsyncValue::Ready(Some(content)) | AsyncValue::Stale(Some(content)) => {
+            Some(content.clone())
+        }
+        AsyncValue::Ready(None) | AsyncValue::Stale(None) => None,
         AsyncValue::Loading | AsyncValue::Failed => None,
     }
 }
@@ -342,11 +345,19 @@ mod tests {
         let async_values = AsyncSegmentValues::from([
             (
                 "git_branch".to_string(),
-                AsyncValue::Ready(SegmentContent::new("git_branch", "main", Style::default())),
+                AsyncValue::Ready(Some(SegmentContent::new(
+                    "git_branch",
+                    "main",
+                    Style::default(),
+                ))),
             ),
             (
                 "git_status".to_string(),
-                AsyncValue::Ready(SegmentContent::new("git_status", "[+1]", Style::default())),
+                AsyncValue::Ready(Some(SegmentContent::new(
+                    "git_status",
+                    "[+1]",
+                    Style::default(),
+                ))),
             ),
         ]);
 
@@ -382,6 +393,8 @@ mod tests {
                     left: vec![
                         "git_branch".to_string(),
                         "git_status".to_string(),
+                        "bun_version".to_string(),
+                        "node_version".to_string(),
                         "runtime".to_string(),
                         "prompt_char".to_string(),
                     ],
@@ -394,9 +407,15 @@ mod tests {
         let async_values = AsyncSegmentValues::from([
             (
                 "git_branch".to_string(),
-                AsyncValue::Stale(SegmentContent::new("git_branch", "main", Style::default())),
+                AsyncValue::Stale(Some(SegmentContent::new(
+                    "git_branch",
+                    "main",
+                    Style::default(),
+                ))),
             ),
             ("git_status".to_string(), AsyncValue::Loading),
+            ("bun_version".to_string(), AsyncValue::Stale(None)),
+            ("node_version".to_string(), AsyncValue::Ready(None)),
             ("runtime".to_string(), AsyncValue::Failed),
         ]);
 

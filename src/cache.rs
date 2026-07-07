@@ -15,14 +15,14 @@ pub struct CacheKey {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum AsyncValue {
     Loading,
-    Ready(SegmentContent),
-    Stale(SegmentContent),
+    Ready(Option<SegmentContent>),
+    Stale(Option<SegmentContent>),
     Failed,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum CachedValue {
-    Success(SegmentContent),
+    Success(Option<SegmentContent>),
     Failure,
 }
 
@@ -98,7 +98,7 @@ impl SegmentCache {
     pub fn complete_success(
         &mut self,
         key: CacheKey,
-        value: SegmentContent,
+        value: Option<SegmentContent>,
         collected_at: Instant,
     ) {
         self.inflight.remove(&key);
@@ -197,7 +197,7 @@ mod tests {
         let mut cache = SegmentCache::new(2);
         let now = Instant::now();
         let key = key("/repo");
-        cache.complete_success(key.clone(), segment("*"), now);
+        cache.complete_success(key.clone(), Some(segment("*")), now);
 
         assert_eq!(
             cache.lookup(
@@ -205,7 +205,7 @@ mod tests {
                 now + Duration::from_millis(999),
                 Duration::from_secs(1)
             ),
-            AsyncValue::Ready(segment("*"))
+            AsyncValue::Ready(Some(segment("*")))
         );
     }
 
@@ -214,11 +214,11 @@ mod tests {
         let mut cache = SegmentCache::new(2);
         let now = Instant::now();
         let key = key("/repo");
-        cache.complete_success(key.clone(), segment("*"), now);
+        cache.complete_success(key.clone(), Some(segment("*")), now);
 
         assert_eq!(
             cache.lookup(&key, now + Duration::from_secs(1), Duration::from_secs(1)),
-            AsyncValue::Stale(segment("*"))
+            AsyncValue::Stale(Some(segment("*")))
         );
     }
 
@@ -227,12 +227,39 @@ mod tests {
         let mut cache = SegmentCache::new(2);
         let now = Instant::now();
         let key = key("/repo");
-        cache.complete_success(key.clone(), segment("*"), now);
+        cache.complete_success(key.clone(), Some(segment("*")), now);
         cache.complete_failure(key.clone(), now + Duration::from_secs(2));
 
         assert_eq!(
             cache.lookup(&key, now + Duration::from_secs(2), Duration::from_secs(1)),
-            AsyncValue::Stale(segment("*"))
+            AsyncValue::Stale(Some(segment("*")))
+        );
+    }
+
+    #[test]
+    fn lookup_returns_ready_for_empty_success() {
+        let mut cache = SegmentCache::new(2);
+        let now = Instant::now();
+        let key = key("/repo");
+        cache.complete_success(key.clone(), None, now);
+
+        assert_eq!(
+            cache.lookup(&key, now, Duration::from_secs(1)),
+            AsyncValue::Ready(None)
+        );
+    }
+
+    #[test]
+    fn failed_refresh_keeps_existing_empty_success_as_stale() {
+        let mut cache = SegmentCache::new(2);
+        let now = Instant::now();
+        let key = key("/repo");
+        cache.complete_success(key.clone(), None, now);
+        cache.complete_failure(key.clone(), now + Duration::from_secs(2));
+
+        assert_eq!(
+            cache.lookup(&key, now + Duration::from_secs(2), Duration::from_secs(1)),
+            AsyncValue::Stale(None)
         );
     }
 
@@ -267,12 +294,12 @@ mod tests {
         let key = key("/repo");
         cache.mark_inflight(key.clone());
 
-        cache.complete_success(key.clone(), segment("*"), now);
+        cache.complete_success(key.clone(), Some(segment("*")), now);
 
         assert!(!cache.is_inflight(&key));
         assert_eq!(
             cache.lookup(&key, now, Duration::from_secs(1)),
-            AsyncValue::Ready(segment("*"))
+            AsyncValue::Ready(Some(segment("*")))
         );
     }
 
@@ -283,9 +310,17 @@ mod tests {
         let first = key("/one");
         let second = key("/two");
         let third = key("/three");
-        cache.complete_success(first.clone(), segment("1"), now);
-        cache.complete_success(second.clone(), segment("2"), now + Duration::from_secs(1));
-        cache.complete_success(third.clone(), segment("3"), now + Duration::from_secs(2));
+        cache.complete_success(first.clone(), Some(segment("1")), now);
+        cache.complete_success(
+            second.clone(),
+            Some(segment("2")),
+            now + Duration::from_secs(1),
+        );
+        cache.complete_success(
+            third.clone(),
+            Some(segment("3")),
+            now + Duration::from_secs(2),
+        );
 
         assert_eq!(
             cache.lookup(
@@ -303,7 +338,7 @@ mod tests {
         let mut cache = SegmentCache::new(0);
         let now = Instant::now();
         let key = key("/repo");
-        cache.complete_success(key.clone(), segment("*"), now);
+        cache.complete_success(key.clone(), Some(segment("*")), now);
 
         assert!(cache.is_empty());
         assert_eq!(

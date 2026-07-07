@@ -206,6 +206,7 @@ fn handle_request_chunk(
             config: config.clone(),
             config_generation: worker_config.generation,
             output,
+            status,
         });
         schedule_async_refreshes(
             job_pool,
@@ -227,6 +228,7 @@ struct ActivePrompt {
     config: Config,
     config_generation: u64,
     output: LoweredPrompt,
+    status: RenderStatus,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -249,7 +251,12 @@ struct AsyncJobSegments {
 #[derive(Debug)]
 struct AsyncJobSegment {
     key: CacheKey,
-    content: Option<SegmentContent>,
+    content: Result<Option<SegmentContent>, CollectFailure>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum CollectFailure {
+    Failed,
 }
 
 fn drain_job_results(
@@ -310,10 +317,10 @@ fn write_update_if_active(
         active_prompt.config_generation,
     );
     let output = render_with_async(&active_prompt.config, &active_prompt.state, &async_values);
-    if output == active_prompt.output {
+    let status = render_status(&active_prompt.config, &async_values);
+    if output == active_prompt.output && status == active_prompt.status {
         return Ok(());
     }
-    let status = render_status(&active_prompt.config, &async_values);
 
     write_record(
         response,
@@ -324,20 +331,29 @@ fn write_update_if_active(
         },
     )?;
     active_prompt.output = output;
+    active_prompt.status = status;
     Ok(())
 }
 
 fn complete_segment(
     cache: &mut SegmentCache,
     key: CacheKey,
-    segment: Option<SegmentContent>,
+    segment: Result<Option<SegmentContent>, CollectFailure>,
     collected_at: Instant,
 ) {
-    if let Some(segment) = segment {
-        cache.complete_success(key, segment, collected_at);
-    } else {
-        cache.complete_failure(key, collected_at);
+    match segment {
+        Ok(segment) => cache.complete_success(key, segment, collected_at),
+        Err(CollectFailure::Failed) => cache.complete_failure(key, collected_at),
     }
+}
+
+fn render_collected_version<E>(
+    result: Result<Option<String>, E>,
+    render: impl FnOnce(&str) -> Option<SegmentContent>,
+) -> Result<Option<SegmentContent>, CollectFailure> {
+    result
+        .map(|version| version.and_then(|version| render(&version)))
+        .map_err(|_error| CollectFailure::Failed)
 }
 
 fn load_worker_config(
@@ -537,36 +553,54 @@ fn schedule_git_refresh(
     let branch_config = config.segment("git_branch");
     let timeout = segment_timeout(&status_config, GIT_TIMEOUT);
     let spawn_result = pool.spawn(generation, status_key.clone(), timeout, move |deadline| {
-        let Ok(Some(status)) = collect_git_status(&cwd, deadline) else {
-            return AsyncJobSegments {
-                segments: vec![
-                    AsyncJobSegment {
-                        key: job_branch_key,
-                        content: None,
-                    },
-                    AsyncJobSegment {
-                        key: job_status_key,
-                        content: None,
-                    },
-                ],
-            };
+        let status = match collect_git_status(&cwd, deadline) {
+            Ok(Some(status)) => status,
+            Ok(None) => {
+                return AsyncJobSegments {
+                    segments: vec![
+                        AsyncJobSegment {
+                            key: job_branch_key,
+                            content: Ok(None),
+                        },
+                        AsyncJobSegment {
+                            key: job_status_key,
+                            content: Ok(None),
+                        },
+                    ],
+                };
+            }
+            Err(_error) => {
+                return AsyncJobSegments {
+                    segments: vec![
+                        AsyncJobSegment {
+                            key: job_branch_key,
+                            content: Err(CollectFailure::Failed),
+                        },
+                        AsyncJobSegment {
+                            key: job_status_key,
+                            content: Err(CollectFailure::Failed),
+                        },
+                    ],
+                };
+            }
         };
 
         AsyncJobSegments {
             segments: vec![
                 AsyncJobSegment {
                     key: job_branch_key,
-                    content: render_git_branch(&status, &branch_config),
+                    content: Ok(render_git_branch(&status, &branch_config)),
                 },
                 AsyncJobSegment {
                     key: job_status_key,
-                    content: render_git_status(&status, &status_config),
+                    content: Ok(render_git_status(&status, &status_config)),
                 },
             ],
         }
     });
 
     if spawn_result.is_err() {
+        cache.complete_failure(branch_key, Instant::now());
         cache.complete_failure(status_key, Instant::now());
     }
 }
@@ -598,10 +632,10 @@ fn schedule_rust_refresh(
     let timeout = segment_timeout(&rust_config, RUNTIME_TIMEOUT);
     let job_key = key.clone();
     let spawn_result = pool.spawn(generation, key.clone(), timeout, move |deadline| {
-        let content = collect_rust_version(&cwd, path.as_deref(), deadline)
-            .ok()
-            .flatten()
-            .and_then(|version| render_rust_version(&version, &rust_config));
+        let content = render_collected_version(
+            collect_rust_version(&cwd, path.as_deref(), deadline),
+            |version| render_rust_version(version, &rust_config),
+        );
         AsyncJobSegments {
             segments: vec![AsyncJobSegment {
                 key: job_key,
@@ -642,10 +676,10 @@ fn schedule_node_refresh(
     let timeout = segment_timeout(&node_config, RUNTIME_TIMEOUT);
     let job_key = key.clone();
     let spawn_result = pool.spawn(generation, key.clone(), timeout, move |deadline| {
-        let content = collect_node_version(&cwd, path.as_deref(), deadline)
-            .ok()
-            .flatten()
-            .and_then(|version| render_node_version(&version, &node_config));
+        let content = render_collected_version(
+            collect_node_version(&cwd, path.as_deref(), deadline),
+            |version| render_node_version(version, &node_config),
+        );
         AsyncJobSegments {
             segments: vec![AsyncJobSegment {
                 key: job_key,
@@ -686,10 +720,10 @@ fn schedule_bun_refresh(
     let timeout = segment_timeout(&bun_config, RUNTIME_TIMEOUT);
     let job_key = key.clone();
     let spawn_result = pool.spawn(generation, key.clone(), timeout, move |deadline| {
-        let content = collect_bun_version(&cwd, path.as_deref(), deadline)
-            .ok()
-            .flatten()
-            .and_then(|version| render_bun_version(&version, &bun_config));
+        let content = render_collected_version(
+            collect_bun_version(&cwd, path.as_deref(), deadline),
+            |version| render_bun_version(version, &bun_config),
+        );
         AsyncJobSegments {
             segments: vec![AsyncJobSegment {
                 key: job_key,
@@ -730,10 +764,10 @@ fn schedule_deno_refresh(
     let timeout = segment_timeout(&deno_config, RUNTIME_TIMEOUT);
     let job_key = key.clone();
     let spawn_result = pool.spawn(generation, key.clone(), timeout, move |deadline| {
-        let content = collect_deno_version(&cwd, path.as_deref(), deadline)
-            .ok()
-            .flatten()
-            .and_then(|version| render_deno_version(&version, &deno_config));
+        let content = render_collected_version(
+            collect_deno_version(&cwd, path.as_deref(), deadline),
+            |version| render_deno_version(version, &deno_config),
+        );
         AsyncJobSegments {
             segments: vec![AsyncJobSegment {
                 key: job_key,
@@ -779,15 +813,15 @@ fn schedule_python_refresh(
     let timeout = segment_timeout(&python_config, RUNTIME_TIMEOUT);
     let job_key = key.clone();
     let spawn_result = pool.spawn(generation, key.clone(), timeout, move |deadline| {
-        let content = collect_python_version(
-            &cwd,
-            env.virtual_env.as_deref(),
-            env.path.as_deref(),
-            deadline,
-        )
-        .ok()
-        .flatten()
-        .and_then(|version| render_python_version(&version, &python_config));
+        let content = render_collected_version(
+            collect_python_version(
+                &cwd,
+                env.virtual_env.as_deref(),
+                env.path.as_deref(),
+                deadline,
+            ),
+            |version| render_python_version(version, &python_config),
+        );
         AsyncJobSegments {
             segments: vec![AsyncJobSegment {
                 key: job_key,
@@ -937,11 +971,11 @@ mod tests {
             ("git_branch".to_string(), AsyncValue::Failed),
             (
                 "git_status".to_string(),
-                AsyncValue::Stale(SegmentContent::new(
+                AsyncValue::Stale(Some(SegmentContent::new(
                     "git_status",
                     "[+1]",
                     Default::default(),
-                )),
+                ))),
             ),
             ("rust_version".to_string(), AsyncValue::Failed),
         ]);
@@ -954,11 +988,11 @@ mod tests {
         let values = AsyncSegmentValues::from([
             (
                 "git_branch".to_string(),
-                AsyncValue::Ready(SegmentContent::new(
+                AsyncValue::Ready(Some(SegmentContent::new(
                     "git_branch",
                     "main",
                     Default::default(),
-                )),
+                ))),
             ),
             ("git_status".to_string(), AsyncValue::Failed),
             ("rust_version".to_string(), AsyncValue::Failed),
@@ -1029,7 +1063,9 @@ mod tests {
         let mut cache = SegmentCache::new(4);
         let initial_values = async_values(&cache, &state, &config, config_generation);
         let output = render_with_async(&config, &state, &initial_values);
+        let status = render_status(&config, &initial_values);
         assert!(!output.prompt.contains("1.96.1"));
+        assert_eq!(status, RenderStatus::Partial);
 
         let mut active_prompt = Some(ActivePrompt {
             generation: 2,
@@ -1037,6 +1073,7 @@ mod tests {
             config,
             config_generation,
             output,
+            status,
         });
         let finished_at = Instant::now();
         let result = JobResult {
@@ -1047,11 +1084,11 @@ mod tests {
             outcome: JobOutcome::Completed(AsyncJobSegments {
                 segments: vec![AsyncJobSegment {
                     key,
-                    content: Some(SegmentContent::new(
+                    content: Ok(Some(SegmentContent::new(
                         "rust_version",
                         "1.96.1",
                         Default::default(),
-                    )),
+                    ))),
                 }],
             }),
         };
@@ -1074,5 +1111,88 @@ mod tests {
         assert_eq!(generation, 2);
         assert_eq!(status, RenderStatus::Final);
         assert!(output.prompt.contains("1.96.1"));
+    }
+
+    #[test]
+    fn empty_job_result_updates_status_without_changing_output() {
+        let tempdir = tempfile::tempdir().expect("tempdir should be created");
+        std::fs::write(
+            tempdir.path().join("Cargo.toml"),
+            "[package]\nname = \"demo\"\n",
+        )
+        .expect("Cargo.toml should be written");
+        let config = Config::from_toml(
+            r#"
+            [layout]
+            lines = 2
+
+            [layout.line1]
+            left = ["rust_version"]
+            right = []
+
+            [layout.line2]
+            left = ["prompt_char"]
+            right = []
+            "#,
+        )
+        .expect("config should parse");
+        let config_generation = 1;
+        let state = PromptState {
+            cwd: tempdir.path().to_path_buf(),
+            exit_status: 0,
+            duration_ms: None,
+            time: None,
+            columns: 120,
+            keymap: Default::default(),
+            env: Default::default(),
+        };
+        let key = rust_cache_key(&state.cwd, None, config_generation)
+            .expect("rust cache key should be available");
+        let mut cache = SegmentCache::new(4);
+        let initial_values = async_values(&cache, &state, &config, config_generation);
+        let output = render_with_async(&config, &state, &initial_values);
+        let status = render_status(&config, &initial_values);
+        assert_eq!(status, RenderStatus::Partial);
+
+        let mut active_prompt = Some(ActivePrompt {
+            generation: 2,
+            state,
+            config,
+            config_generation,
+            output: output.clone(),
+            status,
+        });
+        let finished_at = Instant::now();
+        let result = JobResult {
+            generation: 1,
+            key: key.clone(),
+            started_at: finished_at,
+            finished_at,
+            outcome: JobOutcome::Completed(AsyncJobSegments {
+                segments: vec![AsyncJobSegment {
+                    key,
+                    content: Ok(None),
+                }],
+            }),
+        };
+        let mut response = Vec::new();
+
+        handle_job_result(result, &mut cache, &mut response, &mut active_prompt)
+            .expect("job result should be handled");
+
+        let encoded = String::from_utf8(response).expect("response should be utf8");
+        let frame = encoded.trim_end_matches('\x1e');
+        let WorkerRecord::Update {
+            generation,
+            status,
+            output: updated_output,
+        } = decode_worker_record(frame).expect("update should decode")
+        else {
+            panic!("expected update response");
+        };
+
+        assert_eq!(generation, 2);
+        assert_eq!(status, RenderStatus::Final);
+        assert_eq!(updated_output, output);
     }
 }
