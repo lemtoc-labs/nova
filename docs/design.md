@@ -485,8 +485,9 @@ Minimum supported zsh is 5.8 (ships with macOS; all modules used are stock).
 
 ## Configuration
 
-TOML, discovered as `$NOVA_CONFIG` → `$XDG_CONFIG_HOME/nova/nova.toml` →
-built-in defaults. Missing file is not an error.
+TOML, discovered as `$NOVA_CONFIG` → `$XDG_CONFIG_HOME/nova/config.toml` →
+`$HOME/.config/nova/config.toml` → built-in defaults. Missing file is not an
+error.
 
 ```toml
 [layout]

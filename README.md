@@ -76,34 +76,37 @@ eval "$(nova init zsh)"
 Most users should put their config here:
 
 ```text
-~/.config/nova/nova.toml
+~/.config/nova/config.toml
 ```
 
 If `XDG_CONFIG_HOME` is set, Nova uses that base directory instead:
 
 ```text
-$XDG_CONFIG_HOME/nova/nova.toml
+$XDG_CONFIG_HOME/nova/config.toml
 ```
 
 Config lookup order:
 
 1. `--config PATH`
 2. `$NOVA_CONFIG`
-3. `$XDG_CONFIG_HOME/nova/nova.toml`
-4. `$HOME/.config/nova/nova.toml`
+3. `$XDG_CONFIG_HOME/nova/config.toml`
+4. `$HOME/.config/nova/config.toml`
 
 Use `NOVA_CONFIG` when you want to load an explicit config file:
 
 ```sh
-NOVA_CONFIG=/path/to/nova.toml
+NOVA_CONFIG=/path/to/config.toml
 ```
 
 Start from the complete example:
 
 ```sh
-mkdir -p "${XDG_CONFIG_HOME:-$HOME/.config}/nova"
-cp examples/config.toml "${XDG_CONFIG_HOME:-$HOME/.config}/nova/nova.toml"
-nova check --config "${XDG_CONFIG_HOME:-$HOME/.config}/nova/nova.toml"
+nova_config="${XDG_CONFIG_HOME:-$HOME/.config}/nova/config.toml"
+mkdir -p "$(dirname "$nova_config")"
+curl --proto '=https' --tlsv1.2 -fsSL \
+  https://raw.githubusercontent.com/lemtoc-labs/nova/main/examples/config.toml \
+  -o "$nova_config"
+nova check --config "$nova_config"
 ```
 
 Preview the prompt without starting an interactive shell:
