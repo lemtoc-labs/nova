@@ -570,18 +570,18 @@ fn render_aws_format_template(format: &str, variables: &AwsFormatVariables<'_>) 
     let mut index = 0;
 
     while index < chars.len() {
-        if chars[index] == '[' {
-            if let Some(end) = closing_optional_group(&chars, index + 1) {
-                output.push_str(&render_aws_format_part(&plain, variables).text);
-                plain.clear();
-                let inner = chars[index + 1..end].iter().collect::<String>();
-                let rendered = render_aws_format_part(&inner, variables);
-                if rendered.has_value {
-                    output.push_str(&rendered.text);
-                }
-                index = end + 1;
-                continue;
+        if chars[index] == '['
+            && let Some(end) = closing_optional_group(&chars, index + 1)
+        {
+            output.push_str(&render_aws_format_part(&plain, variables).text);
+            plain.clear();
+            let inner = chars[index + 1..end].iter().collect::<String>();
+            let rendered = render_aws_format_part(&inner, variables);
+            if rendered.has_value {
+                output.push_str(&rendered.text);
             }
+            index = end + 1;
+            continue;
         }
 
         plain.push(chars[index]);
