@@ -77,34 +77,37 @@ eval "$(nova init zsh)"
 ほとんどのユーザーはここに config を置けば十分です:
 
 ```text
-~/.config/nova/nova.toml
+~/.config/nova/config.toml
 ```
 
 `XDG_CONFIG_HOME` を設定している場合は、その directory が base になります:
 
 ```text
-$XDG_CONFIG_HOME/nova/nova.toml
+$XDG_CONFIG_HOME/nova/config.toml
 ```
 
 config の探索順:
 
 1. `--config PATH`
 2. `$NOVA_CONFIG`
-3. `$XDG_CONFIG_HOME/nova/nova.toml`
-4. `$HOME/.config/nova/nova.toml`
+3. `$XDG_CONFIG_HOME/nova/config.toml`
+4. `$HOME/.config/nova/config.toml`
 
 別の config file を明示する場合は `NOVA_CONFIG` に path を指定します:
 
 ```sh
-NOVA_CONFIG=/path/to/nova.toml
+NOVA_CONFIG=/path/to/config.toml
 ```
 
 完全な example から始められます:
 
 ```sh
-mkdir -p "${XDG_CONFIG_HOME:-$HOME/.config}/nova"
-cp examples/config.toml "${XDG_CONFIG_HOME:-$HOME/.config}/nova/nova.toml"
-nova check --config "${XDG_CONFIG_HOME:-$HOME/.config}/nova/nova.toml"
+nova_config="${XDG_CONFIG_HOME:-$HOME/.config}/nova/config.toml"
+mkdir -p "$(dirname "$nova_config")"
+curl --proto '=https' --tlsv1.2 -fsSL \
+  https://raw.githubusercontent.com/lemtoc-labs/nova/main/examples/config.toml \
+  -o "$nova_config"
+nova check --config "$nova_config"
 ```
 
 interactive shell を起動せずに prompt を preview できます:

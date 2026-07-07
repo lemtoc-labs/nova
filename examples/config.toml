@@ -1,16 +1,16 @@
 # Complete Nova configuration example.
 #
 # Most users should put this file at:
-# ~/.config/nova/nova.toml
+# ~/.config/nova/config.toml
 #
 # If XDG_CONFIG_HOME is set, Nova uses:
-# $XDG_CONFIG_HOME/nova/nova.toml
+# $XDG_CONFIG_HOME/nova/config.toml
 #
 # Lookup order:
 # 1. --config PATH
 # 2. $NOVA_CONFIG
-# 3. $XDG_CONFIG_HOME/nova/nova.toml
-# 4. $HOME/.config/nova/nova.toml
+# 3. $XDG_CONFIG_HOME/nova/config.toml
+# 4. $HOME/.config/nova/config.toml
 #
 # Segment ids:
 # aws, bun_version, deno_version, dir, duration, exit_status,
