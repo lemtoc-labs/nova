@@ -11,7 +11,8 @@ concurrency:
   cancel-in-progress: false
 
 permissions:
-  contents: read
+  contents: write
+  deployments: write
 
 jobs:
   benchmark:
@@ -35,20 +36,11 @@ jobs:
             echo "/opt/homebrew/sbin"
           } >> "$GITHUB_PATH"
 
-      - uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
-        with:
-          toolchain: stable
-
       - name: Build release binary
-        run: cargo build --release
-
-      - name: Install zsh-bench
-        run: .github/scripts/install-zsh-bench.sh "$RUNNER_TEMP/zsh-bench"
+        run: nix develop --command cargo build --release
 
       - name: Run zsh benchmark
-        env:
-          NOVA_ZSH_BENCH: ${{ runner.temp }}/zsh-bench/zsh-bench
-        run: scripts/bench-zsh > zsh-bench-result.txt
+        run: nix develop --command scripts/bench-zsh > zsh-bench-result.txt
 
       - name: Convert benchmark result
         run: .github/scripts/convert-zsh-bench.sh zsh-bench-result.txt benchmark-result.json
@@ -59,11 +51,23 @@ jobs:
       - name: Write benchmark summary
         run: cat zsh-bench-summary.md >> "$GITHUB_STEP_SUMMARY"
 
+      - name: Store benchmark result
+        uses: benchmark-action/github-action-benchmark@52576c92bccf6ac60c8223ec7eb2565637cae9ba # v1.22.1
+        with:
+          name: Zsh Interactive Latency
+          tool: customSmallerIsBetter
+          output-file-path: benchmark-result.json
+          benchmark-data-dir-path: bench/zsh
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          auto-push: true
+          comment-always: true
+          fail-on-alert: false
+          summary-always: true
+
       - name: Fail on red zsh-bench metrics
         run: .github/scripts/check-zsh-bench-thresholds.sh benchmark-result.json
 
       - name: Clean benchmark temporary files
         if: always()
         run: |
-          rm -rf "$RUNNER_TEMP/zsh-bench"
           rm -f zsh-bench-result.txt benchmark-result.json zsh-bench-summary.md
