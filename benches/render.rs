@@ -93,5 +93,5 @@ fn async_values() -> AsyncSegmentValues {
 }
 
 fn ready(id: &str, text: &str) -> AsyncValue {
-    AsyncValue::Ready(SegmentContent::new(id, text, Style::default()))
+    AsyncValue::Ready(Some(SegmentContent::new(id, text, Style::default())))
 }
