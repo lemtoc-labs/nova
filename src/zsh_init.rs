@@ -34,9 +34,18 @@ mod tests {
     fn embeds_the_protocol_version() {
         let script = render_init_script(Path::new("/tmp/nova"));
 
-        assert!(script.contains("typeset -g _nova_protocol_version=6"));
+        assert!(script.contains("typeset -g _nova_protocol_version=7"));
         assert!(script.contains("\"${fields[2]}\" == \"$_nova_protocol_version\""));
         assert!(!script.contains("@NOVA_PROTOCOL_VERSION@"));
+    }
+
+    #[test]
+    fn reads_initial_wait_budget_from_handshake() {
+        let script = render_init_script(Path::new("/tmp/nova"));
+
+        assert!(script.contains("typeset -g _nova_wait_cs=0"));
+        assert!(script.contains("_nova_wait_cs=$(( (${fields[4]:-0} + 9) / 10 ))"));
+        assert!(script.contains("[[ \"$_nova_reply_status\" == partial ]]"));
     }
 
     #[test]

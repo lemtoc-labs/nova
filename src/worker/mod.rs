@@ -86,10 +86,19 @@ pub fn run(options: WorkerOptions) -> Result<(), WorkerError> {
             source,
         })?;
 
+    let mut config_state = ConfigState::default();
+    let mut warned_config_error = false;
+    let mut warned_config_warnings = BTreeSet::new();
+    let worker_config = load_worker_config(
+        &mut config_state,
+        &mut warned_config_error,
+        &mut warned_config_warnings,
+    );
     write_record(
         &mut response,
         &WorkerRecord::Handshake {
             session_token: options.session_token,
+            initial_wait_ms: initial_wait_ms(&worker_config.config),
         },
     )?;
 
@@ -100,9 +109,6 @@ pub fn run(options: WorkerOptions) -> Result<(), WorkerError> {
     let mut cache = SegmentCache::new(CACHE_CAPACITY);
     let job_pool = JobPool::new(MAX_CONCURRENCY, events);
     let mut active_prompt = None;
-    let mut config_state = ConfigState::default();
-    let mut warned_config_error = false;
-    let mut warned_config_warnings = BTreeSet::new();
 
     loop {
         match event_receiver.recv() {
@@ -852,13 +858,17 @@ fn render_status(config: &Config, async_values: &AsyncSegmentValues) -> RenderSt
     let has_incomplete_async_segment = async_values
         .iter()
         .filter(|(id, _value)| config_uses_segment(config, id))
-        .any(|(_id, value)| matches!(value, AsyncValue::Loading | AsyncValue::Stale(_)));
+        .any(|(_id, value)| matches!(value, AsyncValue::Loading));
 
     if has_incomplete_async_segment {
         RenderStatus::Partial
     } else {
         RenderStatus::Final
     }
+}
+
+fn initial_wait_ms(config: &Config) -> u64 {
+    config.async_config.initial_wait_ms.unwrap_or_default()
 }
 
 fn segment_timeout(config: &SegmentConfig, default: Duration) -> Duration {
@@ -948,7 +958,19 @@ mod tests {
     }
 
     #[test]
-    fn render_status_is_partial_when_async_values_are_loading_or_stale() {
+    fn render_status_is_partial_when_async_values_are_loading() {
+        let config = Config::default();
+
+        let values = AsyncSegmentValues::from([
+            ("git_branch".to_string(), AsyncValue::Failed),
+            ("git_status".to_string(), AsyncValue::Loading),
+            ("rust_version".to_string(), AsyncValue::Failed),
+        ]);
+        assert_eq!(render_status(&config, &values), RenderStatus::Partial);
+    }
+
+    #[test]
+    fn render_status_is_final_when_async_values_are_stale() {
         let config = Config::default();
 
         let values = AsyncSegmentValues::from([
@@ -963,7 +985,7 @@ mod tests {
             ),
             ("rust_version".to_string(), AsyncValue::Failed),
         ]);
-        assert_eq!(render_status(&config, &values), RenderStatus::Partial);
+        assert_eq!(render_status(&config, &values), RenderStatus::Final);
     }
 
     #[test]
@@ -1059,6 +1081,105 @@ mod tests {
         let finished_at = Instant::now();
         let result = JobResult {
             generation: 1,
+            key: key.clone(),
+            started_at: finished_at,
+            finished_at,
+            outcome: JobOutcome::Completed(AsyncJobSegments {
+                segments: vec![AsyncJobSegment {
+                    key,
+                    content: Ok(Some(SegmentContent::new(
+                        "rust_version",
+                        "1.96.1",
+                        Default::default(),
+                    ))),
+                }],
+            }),
+        };
+        let mut response = Vec::new();
+
+        handle_job_result(result, &mut cache, &mut response, &mut active_prompt)
+            .expect("job result should be handled");
+
+        let encoded = String::from_utf8(response).expect("response should be utf8");
+        let frame = encoded.trim_end_matches('\x1e');
+        let WorkerRecord::Update {
+            generation,
+            status,
+            output,
+        } = decode_worker_record(frame).expect("update should decode")
+        else {
+            panic!("expected update response");
+        };
+
+        assert_eq!(generation, 2);
+        assert_eq!(status, RenderStatus::Final);
+        assert!(output.prompt.contains("1.96.1"));
+    }
+
+    #[test]
+    fn final_status_still_allows_later_updates() {
+        let tempdir = tempfile::tempdir().expect("tempdir should be created");
+        std::fs::write(
+            tempdir.path().join("Cargo.toml"),
+            "[package]\nname = \"demo\"\n",
+        )
+        .expect("Cargo.toml should be written");
+        let config = Config::from_toml(
+            r#"
+            [layout]
+            lines = 2
+
+            [layout.line1]
+            left = ["rust_version"]
+            right = []
+
+            [layout.line2]
+            left = ["prompt_char"]
+            right = []
+
+            [segments.rust_version]
+            ttl_ms = 0
+            "#,
+        )
+        .expect("config should parse");
+        let config_generation = 1;
+        let state = PromptState {
+            cwd: tempdir.path().to_path_buf(),
+            exit_status: 0,
+            duration_ms: None,
+            time: None,
+            columns: 120,
+            keymap: Default::default(),
+            env: Default::default(),
+        };
+        let key = rust_cache_key(&state.cwd, None, config_generation)
+            .expect("rust cache key should be available");
+        let mut cache = SegmentCache::new(4);
+        cache.complete_success(
+            key.clone(),
+            Some(SegmentContent::new(
+                "rust_version",
+                "1.95.0",
+                Default::default(),
+            )),
+            Instant::now(),
+        );
+
+        let initial_values = async_values(&cache, &state, &config, config_generation);
+        let output = render_with_async(&config, &state, &initial_values);
+        assert_eq!(render_status(&config, &initial_values), RenderStatus::Final);
+        assert!(output.prompt.contains("1.95.0"));
+
+        let mut active_prompt = Some(ActivePrompt {
+            generation: 2,
+            state,
+            config,
+            config_generation,
+            output,
+        });
+        let finished_at = Instant::now();
+        let result = JobResult {
+            generation: 2,
             key: key.clone(),
             started_at: finished_at,
             finished_at,

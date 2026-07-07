@@ -54,7 +54,8 @@ fn worker_renders_prompt_over_fifos() {
     assert_eq!(
         read_worker_record(&mut response),
         WorkerRecord::Handshake {
-            session_token: "test-token".to_string()
+            session_token: "test-token".to_string(),
+            initial_wait_ms: 0,
         }
     );
 
@@ -95,6 +96,51 @@ fn worker_renders_prompt_over_fifos() {
 }
 
 #[test]
+fn worker_sends_initial_wait_ms_in_handshake() {
+    let _guard = worker_test_lock();
+    let tempdir = tempfile::tempdir().expect("tempdir should be created");
+    let runtime_dir = tempdir.path().join("runtime");
+    fs::create_dir(&runtime_dir).expect("runtime dir should be created");
+    create_fifo(runtime_dir.join("req"));
+    create_fifo(runtime_dir.join("resp"));
+
+    let config_path = tempdir.path().join("nova.toml");
+    fs::write(
+        &config_path,
+        r#"
+        [async]
+        initial_wait_ms = 10
+        "#,
+    )
+    .expect("config should be written");
+
+    let mut child = StdCommand::new(cargo_bin("nova"))
+        .arg("worker")
+        .arg("--dir")
+        .arg(&runtime_dir)
+        .arg("--session-token")
+        .arg("test-token")
+        .env("NOVA_CONFIG", &config_path)
+        .spawn()
+        .expect("worker should spawn");
+
+    let request = open_fifo_write(runtime_dir.join("req"));
+    let mut response = WorkerReader::new(open_fifo_read(runtime_dir.join("resp")));
+
+    assert_eq!(
+        read_worker_record(&mut response),
+        WorkerRecord::Handshake {
+            session_token: "test-token".to_string(),
+            initial_wait_ms: 10,
+        }
+    );
+
+    drop(request);
+    drop(response);
+    assert_worker_exits(&mut child);
+}
+
+#[test]
 fn worker_sends_update_when_git_status_finishes() {
     let _guard = worker_test_lock();
     let tempdir = tempfile::tempdir().expect("tempdir should be created");
@@ -123,7 +169,8 @@ fn worker_sends_update_when_git_status_finishes() {
     assert_eq!(
         read_worker_record(&mut response),
         WorkerRecord::Handshake {
-            session_token: "test-token".to_string()
+            session_token: "test-token".to_string(),
+            initial_wait_ms: 0,
         }
     );
 
@@ -203,7 +250,8 @@ fn worker_sends_update_when_rust_version_finishes() {
     assert_eq!(
         read_worker_record(&mut response),
         WorkerRecord::Handshake {
-            session_token: "test-token".to_string()
+            session_token: "test-token".to_string(),
+            initial_wait_ms: 0,
         }
     );
 
@@ -276,7 +324,8 @@ fn worker_omits_missing_rust_command_without_update() {
     assert_eq!(
         read_worker_record(&mut response),
         WorkerRecord::Handshake {
-            session_token: "test-token".to_string()
+            session_token: "test-token".to_string(),
+            initial_wait_ms: 0,
         }
     );
 
@@ -362,7 +411,8 @@ fn worker_sends_update_when_node_version_finishes() {
     assert_eq!(
         read_worker_record(&mut response),
         WorkerRecord::Handshake {
-            session_token: "test-token".to_string()
+            session_token: "test-token".to_string(),
+            initial_wait_ms: 0,
         }
     );
 
@@ -436,7 +486,8 @@ fn worker_uses_request_path_for_node_version() {
     assert_eq!(
         read_worker_record(&mut response),
         WorkerRecord::Handshake {
-            session_token: "test-token".to_string()
+            session_token: "test-token".to_string(),
+            initial_wait_ms: 0,
         }
     );
 
@@ -524,7 +575,8 @@ fn worker_sends_update_when_python_version_finishes() {
     assert_eq!(
         read_worker_record(&mut response),
         WorkerRecord::Handshake {
-            session_token: "test-token".to_string()
+            session_token: "test-token".to_string(),
+            initial_wait_ms: 0,
         }
     );
 
@@ -597,7 +649,8 @@ fn worker_sends_update_when_python_virtual_env_finishes() {
     assert_eq!(
         read_worker_record(&mut response),
         WorkerRecord::Handshake {
-            session_token: "test-token".to_string()
+            session_token: "test-token".to_string(),
+            initial_wait_ms: 0,
         }
     );
 
@@ -687,7 +740,8 @@ fn worker_sends_update_when_bun_version_finishes_and_omits_node_version() {
     assert_eq!(
         read_worker_record(&mut response),
         WorkerRecord::Handshake {
-            session_token: "test-token".to_string()
+            session_token: "test-token".to_string(),
+            initial_wait_ms: 0,
         }
     );
 
@@ -773,7 +827,8 @@ fn worker_sends_update_when_deno_version_finishes_and_omits_node_version() {
     assert_eq!(
         read_worker_record(&mut response),
         WorkerRecord::Handshake {
-            session_token: "test-token".to_string()
+            session_token: "test-token".to_string(),
+            initial_wait_ms: 0,
         }
     );
 
@@ -861,7 +916,8 @@ fn worker_invalidates_async_cache_when_config_changes() {
     assert_eq!(
         read_worker_record(&mut response),
         WorkerRecord::Handshake {
-            session_token: "test-token".to_string()
+            session_token: "test-token".to_string(),
+            initial_wait_ms: 0,
         }
     );
 
@@ -994,7 +1050,8 @@ exit 1
     assert_eq!(
         read_worker_record(&mut response),
         WorkerRecord::Handshake {
-            session_token: "test-token".to_string()
+            session_token: "test-token".to_string(),
+            initial_wait_ms: 0,
         }
     );
 
@@ -1008,13 +1065,13 @@ exit 1
     );
 
     let (update_status, update_output) = read_update_response(&mut response, 1);
-    assert_eq!(update_status, RenderStatus::Partial);
+    assert_eq!(update_status, RenderStatus::Final);
     assert!(update_output.prompt.contains("main"));
     assert!(update_output.prompt.contains("[+1]"));
 
     write_render_request(&mut request, 2, repo.clone(), 160);
     let (cached_status, cached_output) = read_prompt_response(&mut response, 2);
-    assert_eq!(cached_status, RenderStatus::Partial);
+    assert_eq!(cached_status, RenderStatus::Final);
     assert!(
         cached_output.prompt.contains("main"),
         "cache-hit prompt should keep stale branch: {}",
@@ -1032,7 +1089,7 @@ exit 1
 
     write_render_request(&mut request, 3, repo, 160);
     let (stale_status, stale_output) = read_prompt_response(&mut response, 3);
-    assert_eq!(stale_status, RenderStatus::Partial);
+    assert_eq!(stale_status, RenderStatus::Final);
     assert!(
         stale_output.prompt.contains("main"),
         "failed refresh should not clear stale branch: {}",
@@ -1117,7 +1174,8 @@ exit 1
     assert_eq!(
         read_worker_record(&mut response),
         WorkerRecord::Handshake {
-            session_token: "test-token".to_string()
+            session_token: "test-token".to_string(),
+            initial_wait_ms: 0,
         }
     );
 
@@ -1172,7 +1230,8 @@ fn worker_warns_once_and_uses_defaults_for_invalid_config() {
     assert_eq!(
         read_worker_record(&mut response),
         WorkerRecord::Handshake {
-            session_token: "test-token".to_string()
+            session_token: "test-token".to_string(),
+            initial_wait_ms: 0,
         }
     );
 
@@ -1246,7 +1305,8 @@ fn worker_warns_once_for_unknown_config_segments() {
     assert_eq!(
         read_worker_record(&mut response),
         WorkerRecord::Handshake {
-            session_token: "test-token".to_string()
+            session_token: "test-token".to_string(),
+            initial_wait_ms: 0,
         }
     );
 

@@ -7,7 +7,7 @@ use thiserror::Error;
 use crate::render::LoweredPrompt;
 use crate::state::{AwsEnv, Keymap, PromptEnv, PromptState};
 
-pub const VERSION: &str = "6";
+pub const VERSION: &str = "7";
 const FIELD_SEPARATOR: char = '\0';
 const RECORD_SEPARATOR: char = '\x1e';
 const RECORD_SEPARATOR_BYTE: u8 = b'\x1e';
@@ -27,6 +27,7 @@ pub enum ClientRecord {
 pub enum WorkerRecord {
     Handshake {
         session_token: String,
+        initial_wait_ms: u64,
     },
     Prompt {
         generation: u64,
@@ -262,10 +263,14 @@ pub fn decode_client_record(record: &str) -> Result<ClientRecord, ProtocolError>
 
 pub fn encode_worker_record(record: &WorkerRecord) -> String {
     match record {
-        WorkerRecord::Handshake { session_token } => encode_fields(&[
+        WorkerRecord::Handshake {
+            session_token,
+            initial_wait_ms,
+        } => encode_fields(&[
             "H".to_string(),
             VERSION.to_string(),
             clean_field(session_token),
+            initial_wait_ms.to_string(),
         ]),
         WorkerRecord::Prompt {
             generation,
@@ -288,9 +293,11 @@ pub fn decode_worker_record(record: &str) -> Result<WorkerRecord, ProtocolError>
 
     match record_type.as_str() {
         "H" => {
-            expect_field_count(record_type, fields.len(), 3)?;
+            expect_field_count(record_type, fields.len(), 4)?;
+            let initial_wait_ms = parse_u64("initial_wait_ms", &fields[3])?;
             Ok(WorkerRecord::Handshake {
                 session_token: fields[2].clone(),
+                initial_wait_ms,
             })
         }
         "P" | "U" => {
@@ -521,6 +528,19 @@ mod tests {
     }
 
     #[test]
+    fn round_trips_worker_handshake_records() {
+        let record = WorkerRecord::Handshake {
+            session_token: "session".to_string(),
+            initial_wait_ms: 10,
+        };
+
+        let encoded = encode_worker_record(&record);
+        let encoded = encoded.trim_end_matches(RECORD_SEPARATOR);
+
+        assert_eq!(decode_worker_record(encoded), Ok(record));
+    }
+
+    #[test]
     fn decodes_render_requests_without_path_field() {
         let record = ClientRecord::Render(RenderRequest {
             generation: 7,
@@ -643,8 +663,9 @@ mod tests {
     fn strips_protocol_separators_from_output_fields() {
         let encoded = encode_worker_record(&WorkerRecord::Handshake {
             session_token: "a\0b\x1ec".to_string(),
+            initial_wait_ms: 40,
         });
 
-        assert_eq!(encoded, format!("H\0{}\0abc\x1e", VERSION));
+        assert_eq!(encoded, format!("H\0{}\0abc\0{}\x1e", VERSION, 40));
     }
 }

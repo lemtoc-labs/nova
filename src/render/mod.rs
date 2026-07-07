@@ -299,6 +299,7 @@ mod tests {
             env: Default::default(),
         };
         let config = Config {
+            async_config: Default::default(),
             layout: LayoutConfig {
                 lines: 1,
                 line1: LineConfig {
@@ -327,6 +328,7 @@ mod tests {
             env: Default::default(),
         };
         let config = Config {
+            async_config: Default::default(),
             layout: LayoutConfig {
                 lines: 1,
                 line1: LineConfig {
@@ -387,6 +389,7 @@ mod tests {
             env: Default::default(),
         };
         let config = Config {
+            async_config: Default::default(),
             layout: LayoutConfig {
                 lines: 1,
                 line1: LineConfig {
@@ -466,6 +469,7 @@ mod tests {
             },
         };
         let config = Config {
+            async_config: Default::default(),
             layout: LayoutConfig {
                 lines: 1,
                 line1: LineConfig {

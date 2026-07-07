@@ -21,6 +21,8 @@ typeset -g _nova_resp_buffer=
 typeset -g _nova_gen=0
 typeset -g _nova_last_applied_gen=0
 typeset -g _nova_reply_applied=0
+typeset -g _nova_reply_status=
+typeset -g _nova_wait_cs=0
 typeset -g _nova_handshake_ok=0
 typeset -g _nova_failures=0
 typeset -g _nova_warned_dead=0
@@ -172,12 +174,14 @@ _nova_apply_record() {
     H)
       if [[ "${fields[2]}" == "$_nova_protocol_version" && "${fields[3]}" == "$_nova_session_token" ]]; then
         _nova_handshake_ok=1
+        _nova_wait_cs=$(( (${fields[4]:-0} + 9) / 10 ))
       fi
       ;;
     P|U)
       local -i gen=${fields[2]:-0}
       (( gen < _nova_last_applied_gen )) && return
       _nova_last_applied_gen=$gen
+      _nova_reply_status="${fields[3]}"
       PROMPT="${fields[4]}"
       RPROMPT="${fields[5]}"
       _nova_reply_applied=1
@@ -243,6 +247,7 @@ _nova_precmd() {
 
   (( _nova_gen++ ))
   _nova_reply_applied=0
+  _nova_reply_status=
   _nova_send_request "$exit_status" "$duration_ms" || {
     _nova_mark_dead
     _nova_fallback
@@ -257,6 +262,22 @@ _nova_precmd() {
       _nova_cmd_start=
       return
     }
+  fi
+
+  if [[ "$_nova_reply_status" == partial ]] && (( _nova_wait_cs > 0 )); then
+    local -F deadline=$(( EPOCHREALTIME + _nova_wait_cs / 100.0 ))
+    local -i remaining_cs
+    while [[ "$_nova_reply_status" != final ]]; do
+      remaining_cs=$(( (deadline - EPOCHREALTIME) * 100 ))
+      (( remaining_cs > 0 )) || break
+      zselect -t $remaining_cs -r "$_nova_resp_fd" >/dev/null 2>&1 || break
+      _nova_drain || {
+        _nova_mark_dead
+        _nova_fallback
+        _nova_cmd_start=
+        return
+      }
+    done
   fi
 
   if (( ! _nova_reply_applied )); then

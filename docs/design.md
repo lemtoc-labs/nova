@@ -30,7 +30,7 @@ sections.
 | Async runtime                | None. `std::thread` + `std::sync::mpsc`                                                         | Slow Path               |
 | Git backend                  | `git` subprocess in the async path, no libgit2/gix                                              | Slow Path               |
 | Worker startup               | Eager spawn during `nova init zsh`; FIFO fds opened lazily on first `precmd`                    | Process Model           |
-| Initial render wait          | zsh waits ≤ 50 ms via `zselect`, then falls back; result applied later via `zle -F`             | zsh Adapter             |
+| Initial render wait          | zsh waits ≤ 50 ms for the first reply, then optionally waits for `final` within `initial_wait_ms` | zsh Adapter             |
 | Disk cache                   | Deferred until measurements justify it                                                          | Cache                   |
 | Minimum zsh                  | 5.8                                                                                             | zsh Adapter             |
 | Default segments             | `dir`, `git_branch`, `git_status`, `rust_version`, `duration`, `prompt_char`                    | Configuration           |
@@ -64,6 +64,7 @@ precmd
   -> worker renders fast segments + cached slow segments
   -> worker replies with fully lowered PROMPT/RPROMPT strings
   -> zsh waits up to 50 ms (zselect); applies result or a fallback prompt
+  -> if configured, zsh waits a small extra budget only when the first reply is partial
   -> worker schedules refresh jobs for stale slow segments
   -> when a job finishes and the composed prompt changed, worker sends Update
   -> zle -F handler reads Update, applies it, runs `zle reset-prompt`
@@ -186,11 +187,11 @@ split it with nothing but parameter expansion:
   RS inside payload fields (it strips control characters from all segment
   text). A cwd or `PATH` containing RS is unsupported.
 
-Records (current version 6):
+Records (current version 7):
 
 ```text
 worker -> zsh, once at startup (handshake):
-  H <NUL> 6 <NUL> session_token <RS>
+  H <NUL> 7 <NUL> session_token <NUL> initial_wait_ms <RS>
 
 zsh -> worker, one per precmd:
   R <NUL> gen <NUL> cwd <NUL> exit_status <NUL> duration_ms <NUL> cols
@@ -217,12 +218,15 @@ Rules:
 - `gen` is a monotonically increasing prompt generation chosen by zsh. The zsh
   side stores the last applied `gen` and discards any record with a smaller
   one; the worker drops queued work for superseded generations.
-- `partial` means async data is still loading or stale; `final` means every
-  active async value is ready or failed. zsh does not interpret this beyond
-  debugging. The worker renders `Ready` and `Stale` values into the prompt and
-  omits `Loading`/`Failed` values so unavailable async data does not move the
-  input line. `Failed` is settled unavailable, so it does not force a
-  status-only update when prompt text is unchanged.
+- `partial` means at least one active async value is still `Loading`. `Stale`
+  content is displayable and therefore counts as `final`. `final` means the
+  prompt has all currently displayable content; it does not mean no later
+  update can arrive for this generation. A stale value can be revalidated and
+  produce a later `U` record when the composed prompt changes. The worker
+  renders `Ready` and `Stale` values into the prompt and omits
+  `Loading`/`Failed` values so unavailable async data does not move the input
+  line. `Failed` is settled unavailable, so it does not force a status-only
+  update when prompt text is unchanged.
 - On a version mismatch in the handshake (stale binary vs. new init script),
   zsh permanently falls back to the plain prompt for the session and warns
   once. A `session_token` mismatch (stale worker from a previous shell) is
@@ -526,6 +530,7 @@ right = ["duration"]
 left  = ["prompt_char"]
 
 [async]
+initial_wait_ms = 0             # extra final wait budget after the first partial reply
 max_concurrency = 2
 timeout_ms = 1000               # per-segment override: [segments.<id>] timeout_ms
 ttl_ms = 300000                 # per-segment override: [segments.<id>] ttl_ms
