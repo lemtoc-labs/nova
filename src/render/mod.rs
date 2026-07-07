@@ -6,8 +6,8 @@ pub mod zsh;
 use std::collections::BTreeMap;
 
 use crate::cache::AsyncValue;
-use crate::config::{Config, LineConfig};
-use crate::segments::{SegmentContent, render_sync_segment};
+use crate::config::{Config, LineConfig, SegmentConfig};
+use crate::segments::{SegmentContent, Style, render_sync_segment};
 use crate::state::PromptState;
 
 pub type AsyncSegmentValues = BTreeMap<String, AsyncValue>;
@@ -143,17 +143,25 @@ fn render_segment(
     render_sync_segment(id, state, config.segment(id)).or_else(|| {
         async_values
             .and_then(|values| values.get(id))
-            .and_then(async_value_content)
+            .and_then(|value| async_value_content(id, value, config.segment(id)))
     })
 }
 
-fn async_value_content(value: &AsyncValue) -> Option<SegmentContent> {
+fn async_value_content(
+    id: &str,
+    value: &AsyncValue,
+    config: &SegmentConfig,
+) -> Option<SegmentContent> {
     match value {
         AsyncValue::Ready(Some(content)) | AsyncValue::Stale(Some(content)) => {
             Some(content.clone())
         }
         AsyncValue::Ready(None) | AsyncValue::Stale(None) => None,
-        AsyncValue::Loading | AsyncValue::Failed => None,
+        AsyncValue::Loading => config
+            .loading
+            .as_ref()
+            .map(|loading| SegmentContent::new(id, loading, Style::from(&config.style))),
+        AsyncValue::Failed => None,
     }
 }
 
@@ -487,6 +495,41 @@ mod tests {
             ["git_branch", "prompt_char"]
         );
         assert_eq!(rendered.line1_left[0].text, "main");
+    }
+
+    #[test]
+    fn renders_configured_loading_placeholder() {
+        let state = PromptState {
+            cwd: PathBuf::from("/repo"),
+            exit_status: 0,
+            duration_ms: None,
+            time: None,
+            columns: 80,
+            keymap: Keymap::Main,
+            env: Default::default(),
+        };
+        let config = Config::from_toml(
+            r#"
+            [layout]
+            lines = 1
+
+            [layout.line1]
+            left = ["git_status", "prompt_char"]
+            right = []
+
+            [segments.git_status]
+            loading = "…"
+            style = { fg = "yellow", bold = true }
+            "#,
+        )
+        .expect("config should parse");
+        let async_values =
+            AsyncSegmentValues::from([("git_status".to_string(), AsyncValue::Loading)]);
+
+        assert_snapshot!(
+            render_with_async(&config, &state, &async_values).prompt,
+            @r###"%{[1;33m%}…%{[0m%} ❯ "###
+        );
     }
 
     #[test]

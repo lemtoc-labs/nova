@@ -551,6 +551,7 @@ icon = ""                     # set to "" to hide the icon
 
 [segments.git_status]
 ttl_ms = 0
+loading = "…"                 # optional; omitted by default to avoid layout shift
 icons = { staged = "+", modified = "!", untracked = "?", stash = "$" } # "" hides an indicator
 
 [segments.rust_version]

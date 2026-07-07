@@ -71,6 +71,7 @@ pub struct SegmentConfig {
     pub characters: BTreeMap<String, String>,
     pub icon: Option<String>,
     pub icons: BTreeMap<String, String>,
+    pub loading: Option<String>,
     pub max_components: Option<usize>,
     pub min_ms: Option<u64>,
     pub force_display: Option<bool>,
@@ -348,6 +349,7 @@ mod tests {
             format = "$symbol$profile"
 
             [segments.git_status]
+            loading = "…"
             icons = { staged = "S", untracked = "U", stash = "T" }
             style = { fg = "202", bg = "#102030" }
             "##,
@@ -383,6 +385,7 @@ mod tests {
         assert!(duration.prefix_style.bold);
         assert_eq!(git_status.style.fg.as_deref(), Some("202"));
         assert_eq!(git_status.style.bg.as_deref(), Some("#102030"));
+        assert_eq!(git_status.loading.as_deref(), Some("…"));
         assert_eq!(
             git_status.icons.get("staged").map(String::as_str),
             Some("S")
