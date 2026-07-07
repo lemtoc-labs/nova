@@ -607,10 +607,12 @@ order; do not start async work before the sync renderer is snapshot-tested.
     priority.
   - Nix follows Starship defaults: `IN_NIX_SHELL=pure|impure` is detected, and
     the PATH heuristic is disabled by default.
-  - AWS follows Starship's profile/region resolution and credential/config
-    display gate: environment credentials, credentials files,
-    `credential_process`, SSO, and `source_profile` are accepted; an
-    environment-variable-only subset is not sufficient.
+  - AWS follows Starship's profile/region resolution. Nova defaults
+    `force_display` to true so a profile or region is enough to render; setting
+    `force_display = false` restores Starship-compatible credential/config
+    gating with environment credentials, credentials files, `credential_process`,
+    SSO, and `source_profile`. See [`aws-format.md`](aws-format.md) for AWS
+    format variables and planned credential duration support.
 - **M6 — Performance.** `zsh-bench` against the budgets in requirements,
   fast-path microbenchmarks, tuning, measured results documented.
 
