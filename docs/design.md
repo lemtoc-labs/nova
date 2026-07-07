@@ -485,9 +485,10 @@ enum Event {
 
 Responsibilities (and nothing more): register `precmd`/`preexec`; capture `$?`
 first; measure duration via `zsh/datetime` `EPOCHREALTIME` deltas; capture
-`PWD`, `COLUMNS`, keymap; spawn/respawn the worker; lazily open FIFO fds
-(always `sysopen -o nonblock -o cloexec`, never a blocking open); do protocol
-I/O only with `sysread`/`syswrite`; send
+`PWD`, `COLUMNS`, keymap; eagerly spawn the worker for interactive shells and
+respawn it after failures; lazily open FIFO fds on the first prompt (always
+`sysopen -o nonblock -o cloexec`, never a blocking open); do protocol I/O only
+with `sysread`/`syswrite`; send
 requests; wait for the first reply with `zselect` (≤ 50 ms), else apply the
 fallback prompt `%~ %# `; watch the resp fd with `zle -F`; apply
 `PROMPT`/`RPROMPT`; call `zle reset-prompt` only when zle is active and the
