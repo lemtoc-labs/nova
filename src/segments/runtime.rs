@@ -1790,6 +1790,9 @@ mod tests {
             .permissions();
         permissions.set_mode(0o755);
         fs::set_permissions(&path, permissions).expect("script should be executable");
+        let file = fs::File::open(&path).expect("script should be opened for sync");
+        file.sync_all()
+            .expect("script should be synced after chmod");
         path
     }
 }
