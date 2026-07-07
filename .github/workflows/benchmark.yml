@@ -51,6 +51,9 @@ jobs:
       - name: Write benchmark summary
         run: cat zsh-bench-summary.md >> "$GITHUB_STEP_SUMMARY"
 
+      - name: Disable git commit signing in workspace
+        run: git config --local commit.gpgsign false
+
       - name: Store benchmark result
         uses: benchmark-action/github-action-benchmark@52576c92bccf6ac60c8223ec7eb2565637cae9ba # v1.22.1
         with:
