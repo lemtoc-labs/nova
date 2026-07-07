@@ -36,7 +36,6 @@ use protocol::{
 };
 
 const CACHE_CAPACITY: usize = 128;
-const EVENT_POLL_INTERVAL: Duration = Duration::from_millis(10);
 const GIT_REFRESH_TTL: Duration = Duration::ZERO;
 const GIT_TIMEOUT: Duration = Duration::from_secs(1);
 const MAX_CONCURRENCY: usize = 2;
@@ -94,28 +93,20 @@ pub fn run(options: WorkerOptions) -> Result<(), WorkerError> {
         },
     )?;
 
-    let (request_events, request_event_receiver) = mpsc::channel::<RequestEvent>();
-    spawn_request_reader(request, request_events);
+    let (events, event_receiver) = mpsc::channel::<WorkerEvent>();
+    spawn_request_reader(request, events.clone());
 
     let mut decoder = FrameDecoder::default();
     let mut cache = SegmentCache::new(CACHE_CAPACITY);
-    let (job_results, job_result_receiver) = mpsc::channel::<JobResult<AsyncJobSegments>>();
-    let job_pool = JobPool::new(MAX_CONCURRENCY, job_results);
+    let job_pool = JobPool::new(MAX_CONCURRENCY, events);
     let mut active_prompt = None;
     let mut config_state = ConfigState::default();
     let mut warned_config_error = false;
     let mut warned_config_warnings = BTreeSet::new();
 
     loop {
-        drain_job_results(
-            &job_result_receiver,
-            &mut cache,
-            &mut response,
-            &mut active_prompt,
-        )?;
-
-        match request_event_receiver.recv_timeout(EVENT_POLL_INTERVAL) {
-            Ok(RequestEvent::Chunk(chunk)) => {
+        match event_receiver.recv() {
+            Ok(WorkerEvent::Chunk(chunk)) => {
                 handle_request_chunk(
                     &chunk,
                     &mut decoder,
@@ -128,32 +119,41 @@ pub fn run(options: WorkerOptions) -> Result<(), WorkerError> {
                     &job_pool,
                 )?;
             }
-            Ok(RequestEvent::Closed) | Err(mpsc::RecvTimeoutError::Disconnected) => return Ok(()),
-            Ok(RequestEvent::Error(error)) => return Err(WorkerError::Read(error)),
-            Err(mpsc::RecvTimeoutError::Timeout) => {}
+            Ok(WorkerEvent::Job(result)) => {
+                handle_job_result(result, &mut cache, &mut response, &mut active_prompt)?;
+            }
+            Ok(WorkerEvent::Closed) | Err(_) => return Ok(()),
+            Ok(WorkerEvent::ReadError(error)) => return Err(WorkerError::Read(error)),
         }
     }
 }
 
 #[derive(Debug)]
-enum RequestEvent {
+enum WorkerEvent {
     Chunk(Vec<u8>),
     Closed,
-    Error(std::io::Error),
+    ReadError(std::io::Error),
+    Job(JobResult<AsyncJobSegments>),
 }
 
-fn spawn_request_reader(mut request: std::fs::File, sender: mpsc::Sender<RequestEvent>) {
+impl From<JobResult<AsyncJobSegments>> for WorkerEvent {
+    fn from(result: JobResult<AsyncJobSegments>) -> Self {
+        Self::Job(result)
+    }
+}
+
+fn spawn_request_reader(mut request: std::fs::File, sender: mpsc::Sender<WorkerEvent>) {
     thread::spawn(move || {
         let mut buffer = [0_u8; 4096];
         loop {
             match request.read(&mut buffer) {
                 Ok(0) => {
-                    let _ = sender.send(RequestEvent::Closed);
+                    let _ = sender.send(WorkerEvent::Closed);
                     return;
                 }
                 Ok(bytes_read) => {
                     if sender
-                        .send(RequestEvent::Chunk(buffer[..bytes_read].to_vec()))
+                        .send(WorkerEvent::Chunk(buffer[..bytes_read].to_vec()))
                         .is_err()
                     {
                         return;
@@ -161,7 +161,7 @@ fn spawn_request_reader(mut request: std::fs::File, sender: mpsc::Sender<Request
                 }
                 Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
                 Err(error) => {
-                    let _ = sender.send(RequestEvent::Error(error));
+                    let _ = sender.send(WorkerEvent::ReadError(error));
                     return;
                 }
             }
@@ -257,19 +257,6 @@ struct AsyncJobSegment {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum CollectFailure {
     Failed,
-}
-
-fn drain_job_results(
-    receiver: &mpsc::Receiver<JobResult<AsyncJobSegments>>,
-    cache: &mut SegmentCache,
-    response: &mut impl Write,
-    active_prompt: &mut Option<ActivePrompt>,
-) -> Result<(), WorkerError> {
-    while let Ok(result) = receiver.try_recv() {
-        handle_job_result(result, cache, response, active_prompt)?;
-    }
-
-    Ok(())
 }
 
 fn handle_job_result(
