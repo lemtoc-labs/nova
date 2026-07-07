@@ -33,8 +33,16 @@ const KNOWN_SEGMENTS: &[&str] = &[
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Eq)]
 #[serde(default)]
 pub struct Config {
+    #[serde(rename = "async")]
+    pub async_config: AsyncConfig,
     pub layout: LayoutConfig,
     pub segments: BTreeMap<String, SegmentConfig>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Eq)]
+#[serde(default)]
+pub struct AsyncConfig {
+    pub initial_wait_ms: Option<u64>,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
@@ -196,6 +204,7 @@ mod tests {
     fn defaults_to_a_two_line_sync_layout() {
         let config = Config::default();
 
+        assert_eq!(config.async_config.initial_wait_ms, None);
         assert_eq!(config.layout.lines, 2);
         assert_eq!(
             config.layout.line1.left,
@@ -224,6 +233,9 @@ mod tests {
             r#"
             [layout]
             lines = 1
+
+            [async]
+            initial_wait_ms = 10
 
             [layout.line1]
             left = ["dir", "prompt_char"]
@@ -255,6 +267,7 @@ mod tests {
         )
         .expect("config should parse");
 
+        assert_eq!(config.async_config.initial_wait_ms, Some(10));
         let dir = config.segment("dir");
         let prompt_char = config.segment("prompt_char");
         let duration = config.segment("duration");
