@@ -18,17 +18,11 @@ use crate::config::error::ConfigWarning;
 use crate::config::load::{ConfigSnapshot, ConfigSource};
 use crate::config::{Config, DEFAULT_INITIAL_WAIT_MS, SegmentConfig};
 use crate::render::{AsyncSegmentValues, LoweredPrompt, render_with_async};
-use crate::segments::SegmentContent;
-use crate::segments::git::{
-    collect_git_status, git_cache_key, render_git_branch, render_git_status,
+use crate::segments::{
+    ASYNC_SEGMENTS, AsyncJobSegment, AsyncSegmentFailure, CollectContext, SegmentContent,
+    known_segment_ids,
 };
-use crate::segments::runtime::{
-    bun_cache_key, collect_bun_version, collect_deno_version, collect_node_version,
-    collect_python_version, collect_rust_version, deno_cache_key, node_cache_key, python_cache_key,
-    render_bun_version, render_deno_version, render_node_version, render_python_version,
-    render_rust_version, rust_cache_key,
-};
-use crate::state::{PromptEnv, PromptState};
+use crate::state::PromptState;
 use jobs::{JobOutcome, JobPool, JobResult};
 use protocol::{
     ClientRecord, FrameDecoder, RenderStatus, WorkerRecord, decode_client_record,
@@ -36,11 +30,7 @@ use protocol::{
 };
 
 const CACHE_CAPACITY: usize = 128;
-const GIT_REFRESH_TTL: Duration = Duration::ZERO;
-const GIT_TIMEOUT: Duration = Duration::from_secs(1);
 const MAX_CONCURRENCY: usize = 2;
-const RUNTIME_REFRESH_TTL: Duration = Duration::from_secs(300);
-const RUNTIME_TIMEOUT: Duration = Duration::from_secs(1);
 
 #[derive(Clone, Debug)]
 pub struct WorkerOptions {
@@ -218,7 +208,7 @@ fn handle_request_chunk(
             cache,
             request.generation,
             request.state,
-            &config,
+            Arc::clone(&config),
             worker_config.generation,
         );
     }
@@ -265,17 +255,6 @@ struct AsyncJobSegments {
     segments: Vec<AsyncJobSegment>,
 }
 
-#[derive(Debug)]
-struct AsyncJobSegment {
-    key: CacheKey,
-    content: Result<Option<SegmentContent>, CollectFailure>,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum CollectFailure {
-    Failed,
-}
-
 fn handle_job_result(
     result: JobResult<AsyncJobSegments>,
     cache: &mut SegmentCache,
@@ -294,13 +273,13 @@ fn complete_job_result(result: JobResult<AsyncJobSegments>, cache: &mut SegmentC
             }
         }
         JobOutcome::Panicked => {
-            if result.key.segment_id == "git_status" {
-                cache.complete_failure(
-                    git_branch_key_from_status_key(&result.key),
-                    result.finished_at,
-                );
+            let mut fail_keys = result.fail_keys;
+            if !fail_keys.contains(&result.key) {
+                fail_keys.push(result.key);
             }
-            cache.complete_failure(result.key, result.finished_at);
+            for key in fail_keys {
+                cache.complete_failure(key, result.finished_at);
+            }
         }
     }
 }
@@ -341,22 +320,13 @@ fn write_update_if_active(
 fn complete_segment(
     cache: &mut SegmentCache,
     key: CacheKey,
-    segment: Result<Option<SegmentContent>, CollectFailure>,
+    segment: Result<Option<SegmentContent>, AsyncSegmentFailure>,
     collected_at: Instant,
 ) {
     match segment {
         Ok(segment) => cache.complete_success(key, segment, collected_at),
-        Err(CollectFailure::Failed) => cache.complete_failure(key, collected_at),
+        Err(AsyncSegmentFailure::Failed) => cache.complete_failure(key, collected_at),
     }
-}
-
-fn render_collected_version<E>(
-    result: Result<Option<String>, E>,
-    render: impl FnOnce(&str) -> Option<SegmentContent>,
-) -> Result<Option<SegmentContent>, CollectFailure> {
-    result
-        .map(|version| version.and_then(|version| render(&version)))
-        .map_err(|_error| CollectFailure::Failed)
 }
 
 fn load_worker_config(
@@ -415,7 +385,7 @@ fn load_worker_config(
 }
 
 fn warn_config_warnings(config: &Config, warned_config_warnings: &mut BTreeSet<ConfigWarning>) {
-    for warning in config.warnings() {
+    for warning in config.warnings(known_segment_ids()) {
         if warned_config_warnings.insert(warning.clone()) {
             eprintln!("nova: warning: {warning}");
         }
@@ -430,62 +400,19 @@ fn async_values(
 ) -> AsyncSegmentValues {
     let now = Instant::now();
     let mut values = AsyncSegmentValues::new();
-    let cwd = &state.cwd;
-    let path = state.env.path.as_deref();
 
-    if config_uses_any_segment(config, &["git_branch", "git_status"])
-        && let Some(status_key) = git_cache_key(cwd, config_generation)
-    {
-        let ttl = segment_ttl(config.segment("git_status"), GIT_REFRESH_TTL);
-        let branch_key = git_branch_key_from_status_key(&status_key);
-        values.insert(
-            "git_branch".to_string(),
-            cache.lookup(&branch_key, now, ttl),
-        );
-        values.insert(
-            "git_status".to_string(),
-            cache.lookup(&status_key, now, ttl),
-        );
-    }
+    for segment in ASYNC_SEGMENTS {
+        if !config_uses_any_segment(config, segment.render_ids()) {
+            continue;
+        }
 
-    if config_uses_segment(config, "rust_version")
-        && let Some(key) = rust_cache_key(cwd, path, config_generation)
-    {
-        let ttl = segment_ttl(config.segment("rust_version"), RUNTIME_REFRESH_TTL);
-        values.insert("rust_version".to_string(), cache.lookup(&key, now, ttl));
-    }
-
-    if config_uses_segment(config, "bun_version")
-        && let Some(key) = bun_cache_key(cwd, path, config_generation)
-    {
-        let ttl = segment_ttl(config.segment("bun_version"), RUNTIME_REFRESH_TTL);
-        values.insert("bun_version".to_string(), cache.lookup(&key, now, ttl));
-    }
-
-    if config_uses_segment(config, "deno_version")
-        && let Some(key) = deno_cache_key(cwd, path, config_generation)
-    {
-        let ttl = segment_ttl(config.segment("deno_version"), RUNTIME_REFRESH_TTL);
-        values.insert("deno_version".to_string(), cache.lookup(&key, now, ttl));
-    }
-
-    if config_uses_segment(config, "python_version")
-        && let Some(key) = python_cache_key(
-            cwd,
-            state.env.virtual_env.as_deref(),
-            path,
-            config_generation,
-        )
-    {
-        let ttl = segment_ttl(config.segment("python_version"), RUNTIME_REFRESH_TTL);
-        values.insert("python_version".to_string(), cache.lookup(&key, now, ttl));
-    }
-
-    if config_uses_segment(config, "node_version")
-        && let Some(key) = node_cache_key(cwd, path, config_generation)
-    {
-        let ttl = segment_ttl(config.segment("node_version"), RUNTIME_REFRESH_TTL);
-        values.insert("node_version".to_string(), cache.lookup(&key, now, ttl));
+        let ttl = segment_ttl(config.segment(segment.primary_id()), segment.default_ttl());
+        for render_id in segment.render_ids() {
+            let Some(key) = segment.cache_key(render_id, state, config_generation) else {
+                continue;
+            };
+            values.insert((*render_id).to_string(), cache.lookup(&key, now, ttl));
+        }
     }
 
     values
@@ -496,384 +423,56 @@ fn schedule_async_refreshes(
     cache: &mut SegmentCache,
     generation: u64,
     state: PromptState,
-    config: &Config,
+    config: Arc<Config>,
     config_generation: u64,
 ) {
-    let cwd = state.cwd;
-    let env = state.env;
-    let path = env.path.clone();
-    schedule_git_refresh(
-        pool,
-        cache,
-        generation,
-        cwd.clone(),
-        config,
-        config_generation,
-    );
-    schedule_rust_refresh(
-        pool,
-        cache,
-        generation,
-        cwd.clone(),
-        path.clone(),
-        config,
-        config_generation,
-    );
-    schedule_bun_refresh(
-        pool,
-        cache,
-        generation,
-        cwd.clone(),
-        path.clone(),
-        config,
-        config_generation,
-    );
-    schedule_deno_refresh(
-        pool,
-        cache,
-        generation,
-        cwd.clone(),
-        path.clone(),
-        config,
-        config_generation,
-    );
-    schedule_python_refresh(
-        pool,
-        cache,
-        generation,
-        cwd.clone(),
-        env,
-        config,
-        config_generation,
-    );
-    schedule_node_refresh(
-        pool,
-        cache,
-        generation,
-        cwd,
-        path,
-        config,
-        config_generation,
-    );
-}
+    for segment in ASYNC_SEGMENTS {
+        if !config_uses_any_segment(&config, segment.render_ids()) {
+            continue;
+        }
 
-fn schedule_git_refresh(
-    pool: &JobPool<AsyncJobSegments>,
-    cache: &mut SegmentCache,
-    generation: u64,
-    cwd: PathBuf,
-    config: &Config,
-    config_generation: u64,
-) {
-    if !config_uses_any_segment(config, &["git_branch", "git_status"]) {
-        return;
-    }
-
-    let Some(status_key) = git_cache_key(&cwd, config_generation) else {
-        return;
-    };
-
-    let status_config = config.segment("git_status").clone();
-    let ttl = segment_ttl(&status_config, GIT_REFRESH_TTL);
-    if !cache.needs_refresh(&status_key, Instant::now(), ttl) {
-        return;
-    }
-
-    cache.mark_inflight(status_key.clone());
-    let branch_key = git_branch_key_from_status_key(&status_key);
-    let job_status_key = status_key.clone();
-    let job_branch_key = branch_key.clone();
-    let branch_config = config.segment("git_branch").clone();
-    let timeout = segment_timeout(&status_config, GIT_TIMEOUT);
-    let spawn_result = pool.spawn(generation, status_key.clone(), timeout, move |deadline| {
-        let status = match collect_git_status(&cwd, deadline) {
-            Ok(Some(status)) => status,
-            Ok(None) => {
-                return AsyncJobSegments {
-                    segments: vec![
-                        AsyncJobSegment {
-                            key: job_branch_key,
-                            content: Ok(None),
-                        },
-                        AsyncJobSegment {
-                            key: job_status_key,
-                            content: Ok(None),
-                        },
-                    ],
-                };
-            }
-            Err(_error) => {
-                return AsyncJobSegments {
-                    segments: vec![
-                        AsyncJobSegment {
-                            key: job_branch_key,
-                            content: Err(CollectFailure::Failed),
-                        },
-                        AsyncJobSegment {
-                            key: job_status_key,
-                            content: Err(CollectFailure::Failed),
-                        },
-                    ],
-                };
-            }
+        let Some(key) = segment.cache_key(segment.primary_id(), &state, config_generation) else {
+            continue;
         };
-
-        AsyncJobSegments {
-            segments: vec![
-                AsyncJobSegment {
-                    key: job_branch_key,
-                    content: Ok(render_git_branch(&status, &branch_config)),
-                },
-                AsyncJobSegment {
-                    key: job_status_key,
-                    content: Ok(render_git_status(&status, &status_config)),
-                },
-            ],
+        let ttl = segment_ttl(config.segment(segment.primary_id()), segment.default_ttl());
+        if !cache.needs_refresh(&key, Instant::now(), ttl) {
+            continue;
         }
-    });
 
-    if spawn_result.is_err() {
-        cache.complete_failure(branch_key, Instant::now());
-        cache.complete_failure(status_key, Instant::now());
-    }
-}
-
-fn schedule_rust_refresh(
-    pool: &JobPool<AsyncJobSegments>,
-    cache: &mut SegmentCache,
-    generation: u64,
-    cwd: PathBuf,
-    path: Option<String>,
-    config: &Config,
-    config_generation: u64,
-) {
-    if !config_uses_segment(config, "rust_version") {
-        return;
-    }
-
-    let Some(key) = rust_cache_key(&cwd, path.as_deref(), config_generation) else {
-        return;
-    };
-
-    let rust_config = config.segment("rust_version").clone();
-    let ttl = segment_ttl(&rust_config, RUNTIME_REFRESH_TTL);
-    if !cache.needs_refresh(&key, Instant::now(), ttl) {
-        return;
-    }
-
-    cache.mark_inflight(key.clone());
-    let timeout = segment_timeout(&rust_config, RUNTIME_TIMEOUT);
-    let job_key = key.clone();
-    let spawn_result = pool.spawn(generation, key.clone(), timeout, move |deadline| {
-        let content = render_collected_version(
-            collect_rust_version(&cwd, path.as_deref(), deadline),
-            |version| render_rust_version(version, &rust_config),
+        let fail_keys = segment
+            .render_ids()
+            .iter()
+            .filter_map(|render_id| segment.cache_key(render_id, &state, config_generation))
+            .collect::<Vec<_>>();
+        cache.mark_inflight(key.clone());
+        let timeout = segment_timeout(
+            config.segment(segment.primary_id()),
+            segment.default_timeout(),
         );
-        AsyncJobSegments {
-            segments: vec![AsyncJobSegment {
-                key: job_key,
-                content,
-            }],
-        }
-    });
-
-    if spawn_result.is_err() {
-        cache.complete_failure(key, Instant::now());
-    }
-}
-
-fn schedule_node_refresh(
-    pool: &JobPool<AsyncJobSegments>,
-    cache: &mut SegmentCache,
-    generation: u64,
-    cwd: PathBuf,
-    path: Option<String>,
-    config: &Config,
-    config_generation: u64,
-) {
-    if !config_uses_segment(config, "node_version") {
-        return;
-    }
-
-    let Some(key) = node_cache_key(&cwd, path.as_deref(), config_generation) else {
-        return;
-    };
-
-    let node_config = config.segment("node_version").clone();
-    let ttl = segment_ttl(&node_config, RUNTIME_REFRESH_TTL);
-    if !cache.needs_refresh(&key, Instant::now(), ttl) {
-        return;
-    }
-
-    cache.mark_inflight(key.clone());
-    let timeout = segment_timeout(&node_config, RUNTIME_TIMEOUT);
-    let job_key = key.clone();
-    let spawn_result = pool.spawn(generation, key.clone(), timeout, move |deadline| {
-        let content = render_collected_version(
-            collect_node_version(&cwd, path.as_deref(), deadline),
-            |version| render_node_version(version, &node_config),
+        let job_state = state.clone();
+        let job_config = Arc::clone(&config);
+        let spawn_result = pool.spawn_with_fail_keys(
+            generation,
+            key.clone(),
+            fail_keys.clone(),
+            timeout,
+            move |deadline| AsyncJobSegments {
+                segments: segment.collect(&CollectContext {
+                    state: &job_state,
+                    config: &job_config,
+                    config_generation,
+                    deadline,
+                }),
+            },
         );
-        AsyncJobSegments {
-            segments: vec![AsyncJobSegment {
-                key: job_key,
-                content,
-            }],
+
+        if spawn_result.is_err() {
+            let finished_at = Instant::now();
+            for key in fail_keys {
+                cache.complete_failure(key, finished_at);
+            }
         }
-    });
-
-    if spawn_result.is_err() {
-        cache.complete_failure(key, Instant::now());
     }
-}
-
-fn schedule_bun_refresh(
-    pool: &JobPool<AsyncJobSegments>,
-    cache: &mut SegmentCache,
-    generation: u64,
-    cwd: PathBuf,
-    path: Option<String>,
-    config: &Config,
-    config_generation: u64,
-) {
-    if !config_uses_segment(config, "bun_version") {
-        return;
-    }
-
-    let Some(key) = bun_cache_key(&cwd, path.as_deref(), config_generation) else {
-        return;
-    };
-
-    let bun_config = config.segment("bun_version").clone();
-    let ttl = segment_ttl(&bun_config, RUNTIME_REFRESH_TTL);
-    if !cache.needs_refresh(&key, Instant::now(), ttl) {
-        return;
-    }
-
-    cache.mark_inflight(key.clone());
-    let timeout = segment_timeout(&bun_config, RUNTIME_TIMEOUT);
-    let job_key = key.clone();
-    let spawn_result = pool.spawn(generation, key.clone(), timeout, move |deadline| {
-        let content = render_collected_version(
-            collect_bun_version(&cwd, path.as_deref(), deadline),
-            |version| render_bun_version(version, &bun_config),
-        );
-        AsyncJobSegments {
-            segments: vec![AsyncJobSegment {
-                key: job_key,
-                content,
-            }],
-        }
-    });
-
-    if spawn_result.is_err() {
-        cache.complete_failure(key, Instant::now());
-    }
-}
-
-fn schedule_deno_refresh(
-    pool: &JobPool<AsyncJobSegments>,
-    cache: &mut SegmentCache,
-    generation: u64,
-    cwd: PathBuf,
-    path: Option<String>,
-    config: &Config,
-    config_generation: u64,
-) {
-    if !config_uses_segment(config, "deno_version") {
-        return;
-    }
-
-    let Some(key) = deno_cache_key(&cwd, path.as_deref(), config_generation) else {
-        return;
-    };
-
-    let deno_config = config.segment("deno_version").clone();
-    let ttl = segment_ttl(&deno_config, RUNTIME_REFRESH_TTL);
-    if !cache.needs_refresh(&key, Instant::now(), ttl) {
-        return;
-    }
-
-    cache.mark_inflight(key.clone());
-    let timeout = segment_timeout(&deno_config, RUNTIME_TIMEOUT);
-    let job_key = key.clone();
-    let spawn_result = pool.spawn(generation, key.clone(), timeout, move |deadline| {
-        let content = render_collected_version(
-            collect_deno_version(&cwd, path.as_deref(), deadline),
-            |version| render_deno_version(version, &deno_config),
-        );
-        AsyncJobSegments {
-            segments: vec![AsyncJobSegment {
-                key: job_key,
-                content,
-            }],
-        }
-    });
-
-    if spawn_result.is_err() {
-        cache.complete_failure(key, Instant::now());
-    }
-}
-
-fn schedule_python_refresh(
-    pool: &JobPool<AsyncJobSegments>,
-    cache: &mut SegmentCache,
-    generation: u64,
-    cwd: PathBuf,
-    env: PromptEnv,
-    config: &Config,
-    config_generation: u64,
-) {
-    if !config_uses_segment(config, "python_version") {
-        return;
-    }
-
-    let Some(key) = python_cache_key(
-        &cwd,
-        env.virtual_env.as_deref(),
-        env.path.as_deref(),
-        config_generation,
-    ) else {
-        return;
-    };
-
-    let python_config = config.segment("python_version").clone();
-    let ttl = segment_ttl(&python_config, RUNTIME_REFRESH_TTL);
-    if !cache.needs_refresh(&key, Instant::now(), ttl) {
-        return;
-    }
-
-    cache.mark_inflight(key.clone());
-    let timeout = segment_timeout(&python_config, RUNTIME_TIMEOUT);
-    let job_key = key.clone();
-    let spawn_result = pool.spawn(generation, key.clone(), timeout, move |deadline| {
-        let content = render_collected_version(
-            collect_python_version(
-                &cwd,
-                env.virtual_env.as_deref(),
-                env.path.as_deref(),
-                deadline,
-            ),
-            |version| render_python_version(version, &python_config),
-        );
-        AsyncJobSegments {
-            segments: vec![AsyncJobSegment {
-                key: job_key,
-                content,
-            }],
-        }
-    });
-
-    if spawn_result.is_err() {
-        cache.complete_failure(key, Instant::now());
-    }
-}
-
-fn git_branch_key_from_status_key(status_key: &CacheKey) -> CacheKey {
-    CacheKey::new(
-        "git_branch",
-        status_key.source.clone(),
-        status_key.config_generation,
-    )
 }
 
 fn config_uses_any_segment(config: &Config, ids: &[&str]) -> bool {
@@ -942,6 +541,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::segments::runtime::rust_cache_key;
     use crate::worker::protocol::decode_worker_record;
 
     #[test]
@@ -1208,6 +808,7 @@ mod tests {
         let result = JobResult {
             generation: 1,
             key: key.clone(),
+            fail_keys: vec![key.clone()],
             started_at: finished_at,
             finished_at,
             outcome: JobOutcome::Completed(AsyncJobSegments {
@@ -1307,6 +908,7 @@ mod tests {
         let result = JobResult {
             generation: 2,
             key: key.clone(),
+            fail_keys: vec![key.clone()],
             started_at: finished_at,
             finished_at,
             outcome: JobOutcome::Completed(AsyncJobSegments {
@@ -1391,6 +993,7 @@ mod tests {
         let result = JobResult {
             generation: 1,
             key: key.clone(),
+            fail_keys: vec![key.clone()],
             started_at: finished_at,
             finished_at,
             outcome: JobOutcome::Completed(AsyncJobSegments {

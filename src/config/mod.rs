@@ -12,24 +12,6 @@ use serde::Deserialize;
 
 use self::error::{ConfigError, ConfigWarning};
 
-const KNOWN_SEGMENTS: &[&str] = &[
-    "aws",
-    "dir",
-    "duration",
-    "deno_version",
-    "exit_status",
-    "bun_version",
-    "git_branch",
-    "git_status",
-    "nix_shell",
-    "node_version",
-    "prompt_char",
-    "python_version",
-    "rust_version",
-    "ssh",
-    "time",
-    "user_host",
-];
 pub const DEFAULT_INITIAL_WAIT_MS: u64 = 0;
 static DEFAULT_SEGMENT_CONFIG: LazyLock<SegmentConfig> = LazyLock::new(SegmentConfig::default);
 
@@ -125,12 +107,12 @@ impl Config {
         self.segments.get(id).unwrap_or(&DEFAULT_SEGMENT_CONFIG)
     }
 
-    pub fn warnings(&self) -> Vec<ConfigWarning> {
+    pub fn warnings(&self, known_segment_ids: &[&str]) -> Vec<ConfigWarning> {
         let mut warnings = Vec::new();
         let mut seen = BTreeSet::new();
 
         for (location, segment) in self.layout_segments() {
-            if is_known_segment(segment) {
+            if known_segment_ids.contains(&segment) {
                 continue;
             }
 
@@ -184,10 +166,6 @@ impl Config {
                 .map(move |segment| (location, segment.as_str()))
         })
     }
-}
-
-fn is_known_segment(segment: &str) -> bool {
-    KNOWN_SEGMENTS.contains(&segment)
 }
 
 fn push_style_warnings(warnings: &mut Vec<ConfigWarning>, location: &str, style: &StyleConfig) {
@@ -283,6 +261,25 @@ impl LayoutConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const TEST_KNOWN_SEGMENTS: &[&str] = &[
+        "aws",
+        "bun_version",
+        "deno_version",
+        "dir",
+        "duration",
+        "exit_status",
+        "git_branch",
+        "git_status",
+        "nix_shell",
+        "node_version",
+        "prompt_char",
+        "python_version",
+        "rust_version",
+        "ssh",
+        "time",
+        "user_host",
+    ];
 
     #[test]
     fn defaults_to_a_two_line_sync_layout() {
@@ -433,7 +430,7 @@ mod tests {
         .expect("config should parse");
 
         assert_eq!(
-            config.warnings(),
+            config.warnings(TEST_KNOWN_SEGMENTS),
             [
                 ConfigWarning::UnknownLayoutSegment {
                     location: "layout.line1.left".to_string(),
@@ -467,7 +464,7 @@ mod tests {
         .expect("config should parse");
 
         assert_eq!(
-            config.warnings(),
+            config.warnings(TEST_KNOWN_SEGMENTS),
             [
                 ConfigWarning::InvalidColor {
                     location: "segments.dir.style.fg".to_string(),
