@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
   <head>
     <meta charset="utf-8" />
@@ -28,7 +28,14 @@
       html {
         background: var(--bg);
         color: var(--text);
-        font-family: BlinkMacSystemFont, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+        font-family:
+          BlinkMacSystemFont,
+          -apple-system,
+          "Segoe UI",
+          Roboto,
+          Helvetica,
+          Arial,
+          sans-serif;
         font-size: 16px;
         -webkit-font-smoothing: antialiased;
       }
@@ -262,13 +269,18 @@
         <p class="summary-note">
           <span class="summary-note-line">
             Summary targets follow
-            <a rel="noopener" href="https://github.com/romkatv/zsh-bench#how-fast-is-fast">zsh-bench human-bench thresholds</a>.
+            <a rel="noopener" href="https://github.com/romkatv/zsh-bench#how-fast-is-fast"
+              >zsh-bench human-bench thresholds</a
+            >.
           </span>
           <span class="summary-note-line">
-            Colors are normalized by each target: green &le; 50%, yellow &le; 100%, orange &le; 200%, red &gt; 200%.
+            Colors are normalized by each target: green &le; 50%, yellow &le; 100%, orange &le;
+            200%, red &gt; 200%.
           </span>
           <span class="summary-note-line">
-            <a rel="noopener" href="https://github.com/romkatv/zsh-bench#what-it-measures">Exit Time has no perceptual threshold</a>
+            <a rel="noopener" href="https://github.com/romkatv/zsh-bench#what-it-measures"
+              >Exit Time has no perceptual threshold</a
+            >
             and is shown as a neutral reference.
           </span>
         </p>
@@ -278,67 +290,62 @@
 
       <footer class="site-footer">
         <button id="dl-button" type="button">Download data as JSON</button>
-        <span>Powered by <a rel="noopener" href="https://github.com/marketplace/actions/continuous-benchmark">github-action-benchmark</a></span>
+        <span
+          >Powered by
+          <a rel="noopener" href="https://github.com/marketplace/actions/continuous-benchmark"
+            >github-action-benchmark</a
+          ></span
+        >
       </footer>
     </div>
 
     <script src="https://cdn.jsdelivr.net/npm/chart.js@2.9.2/dist/Chart.min.js"></script>
     <script src="data.js"></script>
     <script>
-      'use strict';
+      "use strict";
 
       (() => {
-        const startupMetricOrder = [
-          'first prompt lag',
-          'first command lag',
-        ];
+        const startupMetricOrder = ["first prompt lag", "first command lag"];
 
-        const interactiveMetricOrder = [
-          'command lag',
-          'input lag',
-        ];
+        const interactiveMetricOrder = ["command lag", "input lag"];
 
-        const summaryMetricOrder = [
-          ...startupMetricOrder,
-          ...interactiveMetricOrder,
-          'exit time',
-        ];
+        const summaryMetricOrder = [...startupMetricOrder, ...interactiveMetricOrder, "exit time"];
 
         const metricDetails = {
-          'first prompt lag': {
-            label: 'First Prompt',
+          "first prompt lag": {
+            label: "First Prompt",
             target: 50,
-            color: '#0969da',
-            description: 'Terminal open to visible prompt',
+            color: "#0969da",
+            description: "Terminal open to visible prompt",
           },
-          'first command lag': {
-            label: 'First Command',
+          "first command lag": {
+            label: "First Command",
             target: 150,
-            color: '#8250df',
-            description: 'Terminal open to first command execution',
+            color: "#8250df",
+            description: "Terminal open to first command execution",
           },
-          'command lag': {
-            label: 'Command Lag',
+          "command lag": {
+            label: "Command Lag",
             target: 10,
-            color: '#cf222e',
-            description: 'Enter key to next prompt',
+            color: "#cf222e",
+            description: "Enter key to next prompt",
           },
-          'input lag': {
-            label: 'Input Lag',
+          "input lag": {
+            label: "Input Lag",
             target: 20,
-            color: '#1b7c83',
-            description: 'Key press to visible character',
+            color: "#1b7c83",
+            description: "Key press to visible character",
           },
-          'exit time': {
-            label: 'Exit Time',
+          "exit time": {
+            label: "Exit Time",
             target: null,
-            color: '#57606a',
-            description: 'Shell exit reference timing',
+            color: "#57606a",
+            description: "Shell exit reference timing",
           },
         };
 
         function formatMs(value, digits = 1) {
-          return Number.isFinite(value) ? `${value.toFixed(digits)} ms` : 'n/a';
+          return Number.isFinite(value) ? `${value.toFixed(digits)} ms` : "n/a";
         }
 
         function collectBenches(entries) {
@@ -366,33 +373,33 @@
 
         function statusFor(value, target) {
           if (!Number.isFinite(value) || !target) {
-            return '';
+            return "";
           }
           if (value <= target * 0.5) {
-            return 'good';
+            return "good";
           }
           if (value <= target) {
-            return 'ok';
+            return "ok";
           }
           if (value <= target * 2) {
-            return 'warn';
+            return "warn";
           }
-          return 'bad';
+          return "bad";
         }
 
         function targetDescription(metricNames) {
           return metricNames
-            .map(name => `${metricDetails[name].label} ${metricDetails[name].target} ms`)
-            .join(', ');
+            .map((name) => `${metricDetails[name].label} ${metricDetails[name].target} ms`)
+            .join(", ");
         }
 
         function makeDataset(metricName, series) {
           const detail = metricDetails[metricName] || {};
           return {
             label: detail.label || metricName,
-            data: series.map(item => item.bench.value),
-            borderColor: detail.color || '#57606a',
-            backgroundColor: 'transparent',
+            data: series.map((item) => item.bench.value),
+            borderColor: detail.color || "#57606a",
+            backgroundColor: "transparent",
             borderWidth: 2,
             pointRadius: 2,
             pointHoverRadius: 5,
@@ -419,13 +426,13 @@
 
           return {
             maintainAspectRatio: false,
-            legend: { position: 'bottom' },
+            legend: { position: "bottom" },
             scales: {
               xAxes: [
                 {
                   scaleLabel: {
                     display: true,
-                    labelString: 'commit',
+                    labelString: "commit",
                   },
                   ticks: {
                     autoSkip: true,
@@ -445,25 +452,33 @@
               ],
             },
             tooltips: {
-              mode: 'index',
+              mode: "index",
               intersect: false,
               callbacks: {
-                afterTitle: items => {
+                afterTitle: (items) => {
                   const item = items[0];
                   const metricName = Object.keys(seriesByMetric)[item.datasetIndex];
                   const row = seriesByMetric[metricName][item.index];
-                  return '\n' + row.commit.message.split('\n')[0] + '\n\n' + row.commit.timestamp + ' committed by @' + row.commit.committer.username + '\n';
+                  return (
+                    "\n" +
+                    row.commit.message.split("\n")[0] +
+                    "\n\n" +
+                    row.commit.timestamp +
+                    " committed by @" +
+                    row.commit.committer.username +
+                    "\n"
+                  );
                 },
-                label: item => {
+                label: (item) => {
                   const metricName = Object.keys(seriesByMetric)[item.datasetIndex];
                   const row = seriesByMetric[metricName][item.index];
-                  const range = row.bench.range ? ` (${row.bench.range})` : '';
+                  const range = row.bench.range ? ` (${row.bench.range})` : "";
                   return `${item.yLabel} ${row.bench.unit}${range}`;
                 },
-                afterLabel: item => {
+                afterLabel: (item) => {
                   const metricName = Object.keys(seriesByMetric)[item.datasetIndex];
                   const extra = seriesByMetric[metricName][item.index].bench.extra;
-                  return extra ? '\n' + extra : '';
+                  return extra ? "\n" + extra : "";
                 },
               },
             },
@@ -474,29 +489,29 @@
               const elem = activeElems[0];
               const metricName = Object.keys(seriesByMetric)[elem._datasetIndex];
               const row = seriesByMetric[metricName][elem._index];
-              window.open(row.commit.url, '_blank');
+              window.open(row.commit.url, "_blank");
             },
           };
         }
 
         function section(title, description) {
-          const element = document.createElement('section');
-          element.className = 'section';
+          const element = document.createElement("section");
+          element.className = "section";
 
-          const header = document.createElement('div');
-          header.className = 'section-header';
+          const header = document.createElement("div");
+          header.className = "section-header";
           element.appendChild(header);
 
-          const text = document.createElement('div');
+          const text = document.createElement("div");
           header.appendChild(text);
 
-          const heading = document.createElement('h2');
+          const heading = document.createElement("h2");
           heading.textContent = title;
           text.appendChild(heading);
 
           if (description) {
-            const paragraph = document.createElement('p');
-            paragraph.className = 'section-description';
+            const paragraph = document.createElement("p");
+            paragraph.className = "section-description";
             paragraph.textContent = description;
             text.appendChild(paragraph);
           }
@@ -505,62 +520,64 @@
         }
 
         function renderEmpty(parent, message) {
-          const empty = document.createElement('div');
-          empty.className = 'empty-state';
+          const empty = document.createElement("div");
+          empty.className = "empty-state";
           empty.textContent = message;
           parent.appendChild(empty);
         }
 
         function renderChart(parent, metricMap, metricNames, config = {}) {
-          const available = metricNames.filter(name => displaySeries(metricMap.get(name), config).length > 0);
+          const available = metricNames.filter(
+            (name) => displaySeries(metricMap.get(name), config).length > 0,
+          );
           if (available.length === 0) {
-            renderEmpty(parent, 'Waiting for the first zsh-bench run.');
+            renderEmpty(parent, "Waiting for the first zsh-bench run.");
             return;
           }
 
-          const chartArea = document.createElement('div');
-          chartArea.className = 'chart-wrap';
+          const chartArea = document.createElement("div");
+          chartArea.className = "chart-wrap";
           parent.appendChild(chartArea);
 
-          const canvas = document.createElement('canvas');
+          const canvas = document.createElement("canvas");
           chartArea.appendChild(canvas);
 
           const seriesByMetric = Object.fromEntries(
-            available.map(name => [name, displaySeries(metricMap.get(name), config)]),
+            available.map((name) => [name, displaySeries(metricMap.get(name), config)]),
           );
           const primarySeries = seriesByMetric[available[0]];
-          const labels = primarySeries.map(row => row.commit.id.slice(0, 7));
+          const labels = primarySeries.map((row) => row.commit.id.slice(0, 7));
 
           new Chart(canvas, {
-            type: 'line',
+            type: "line",
             data: {
               labels,
-              datasets: available.map(name => makeDataset(name, seriesByMetric[name])),
+              datasets: available.map((name) => makeDataset(name, seriesByMetric[name])),
             },
             options: chartOptions(primarySeries[0].bench.unit, seriesByMetric, config),
           });
         }
 
         function renderSummary(metricMap) {
-          const summary = document.getElementById('summary');
-          summary.textContent = '';
+          const summary = document.getElementById("summary");
+          summary.textContent = "";
 
           for (const name of summaryMetricOrder) {
             const detail = metricDetails[name];
             const value = latestValue(metricMap.get(name));
-            const card = document.createElement('div');
+            const card = document.createElement("div");
             const status = statusFor(value, detail.target);
-            card.className = status ? `metric-card ${status}` : 'metric-card';
+            card.className = status ? `metric-card ${status}` : "metric-card";
 
-            const label = document.createElement('span');
+            const label = document.createElement("span");
             label.textContent = detail.label;
             card.appendChild(label);
 
-            const strong = document.createElement('strong');
+            const strong = document.createElement("strong");
             strong.textContent = formatMs(value, 2);
             card.appendChild(strong);
 
-            const small = document.createElement('small');
+            const small = document.createElement("small");
             small.textContent = detail.target
               ? `${detail.description}; target ${detail.target} ms`
               : `${detail.description}; reference only`;
@@ -572,43 +589,46 @@
 
         function render() {
           const data = window.BENCHMARK_DATA;
-          const entries = data.entries['Zsh Interactive Latency'] || [];
+          const entries = data.entries["Zsh Interactive Latency"] || [];
           const metricMap = collectBenches(entries);
 
-          document.getElementById('last-update').textContent = new Date(data.lastUpdate).toString();
-          const repoLink = document.getElementById('repository-link');
+          document.getElementById("last-update").textContent = new Date(data.lastUpdate).toString();
+          const repoLink = document.getElementById("repository-link");
           repoLink.href = data.repoUrl;
           repoLink.textContent = data.repoUrl;
 
-          document.getElementById('dl-button').onclick = () => {
-            const dataUrl = 'data:,' + encodeURIComponent(JSON.stringify(data, null, 2));
-            const anchor = document.createElement('a');
+          document.getElementById("dl-button").onclick = () => {
+            const dataUrl = "data:," + encodeURIComponent(JSON.stringify(data, null, 2));
+            const anchor = document.createElement("a");
             anchor.href = dataUrl;
-            anchor.download = 'benchmark_data.json';
+            anchor.download = "benchmark_data.json";
             anchor.click();
           };
 
           renderSummary(metricMap);
 
-          const main = document.getElementById('main');
-          main.textContent = '';
+          const main = document.getElementById("main");
+          main.textContent = "";
 
           const startup = section(
-            'Startup Latency',
+            "Startup Latency",
             `Terminal open to prompt readiness and first command execution. Targets: ${targetDescription(startupMetricOrder)}.`,
           );
           renderChart(startup, metricMap, startupMetricOrder);
           main.appendChild(startup);
 
           const interactive = section(
-            'Interactive Latency',
+            "Interactive Latency",
             `Recent prompt and keypress responsiveness after startup. Targets: ${targetDescription(interactiveMetricOrder)}.`,
           );
           renderChart(interactive, metricMap, interactiveMetricOrder, { maxPoints: 12 });
           main.appendChild(interactive);
 
-          const exit = section('Exit Time', 'Recorded for continuity, but not used as the main interactive performance signal.');
-          renderChart(exit, metricMap, ['exit time']);
+          const exit = section(
+            "Exit Time",
+            "Recorded for continuity, but not used as the main interactive performance signal.",
+          );
+          renderChart(exit, metricMap, ["exit time"]);
           main.appendChild(exit);
         }
 

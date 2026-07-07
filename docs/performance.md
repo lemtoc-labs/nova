@@ -68,12 +68,12 @@ for completeness, but it is not a good proxy for interactive shell latency.
 Use the `zsh-bench` perception thresholds as the baseline for interpreting
 results:
 
-| metric | green | yellow limit | orange limit | red |
-| --- | ---: | ---: | ---: | ---: |
-| `first_prompt_lag_ms` | `<= 25ms` | `<= 50ms` | `<= 100ms` | `> 100ms` |
-| `first_command_lag_ms` | `<= 75ms` | `<= 150ms` | `<= 300ms` | `> 300ms` |
-| `command_lag_ms` | `<= 5ms` | `<= 10ms` | `<= 20ms` | `> 20ms` |
-| `input_lag_ms` | `<= 10ms` | `<= 20ms` | `<= 40ms` | `> 40ms` |
+| metric                 |     green | yellow limit | orange limit |       red |
+| ---------------------- | --------: | -----------: | -----------: | --------: |
+| `first_prompt_lag_ms`  | `<= 25ms` |    `<= 50ms` |   `<= 100ms` | `> 100ms` |
+| `first_command_lag_ms` | `<= 75ms` |   `<= 150ms` |   `<= 300ms` | `> 300ms` |
+| `command_lag_ms`       |  `<= 5ms` |    `<= 10ms` |    `<= 20ms` |  `> 20ms` |
+| `input_lag_ms`         | `<= 10ms` |    `<= 20ms` |    `<= 40ms` |  `> 40ms` |
 
 Nova uses those thresholds in three tiers:
 
