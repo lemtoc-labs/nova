@@ -181,8 +181,7 @@ fn handle_request_chunk(
     active_prompt: &mut Option<ActivePrompt>,
     job_pool: &JobPool<AsyncJobSegments>,
 ) -> Result<(), WorkerError> {
-    let chunk = String::from_utf8_lossy(chunk);
-    for frame in decoder.push(&chunk) {
+    for frame in decoder.push(chunk) {
         let Ok(ClientRecord::Render(request)) = decode_client_record(&frame) else {
             continue;
         };

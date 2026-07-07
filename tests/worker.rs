@@ -1322,8 +1322,7 @@ fn read_worker_record(reader: &mut WorkerReader) -> WorkerRecord {
         match reader.response.read(&mut buffer) {
             Ok(0) => {}
             Ok(bytes_read) => {
-                let chunk = String::from_utf8_lossy(&buffer[..bytes_read]);
-                for frame in reader.decoder.push(&chunk) {
+                for frame in reader.decoder.push(&buffer[..bytes_read]) {
                     reader.pending.push_back(
                         decode_worker_record(&frame).expect("worker record should decode"),
                     );
@@ -1356,8 +1355,12 @@ fn assert_no_worker_record(reader: &mut WorkerReader, timeout: Duration) {
         match reader.response.read(&mut buffer) {
             Ok(0) => {}
             Ok(bytes_read) => {
-                let chunk = String::from_utf8_lossy(&buffer[..bytes_read]);
-                if let Some(frame) = reader.decoder.push(&chunk).into_iter().next() {
+                if let Some(frame) = reader
+                    .decoder
+                    .push(&buffer[..bytes_read])
+                    .into_iter()
+                    .next()
+                {
                     let record = decode_worker_record(&frame).expect("worker record should decode");
                     panic!("unexpected worker record: {record:?}");
                 }
