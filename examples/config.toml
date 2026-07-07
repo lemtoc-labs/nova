@@ -1,0 +1,160 @@
+# Complete Nova configuration example.
+#
+# Discovery order:
+# 1. $NOVA_CONFIG
+# 2. $XDG_CONFIG_HOME/nova/nova.toml
+# 3. $HOME/.config/nova/nova.toml
+#
+# Segment ids:
+# aws, bun_version, deno_version, dir, duration, exit_status,
+# git_branch, git_status, nix_shell, node_version, prompt_char,
+# python_version, rust_version, ssh, time, user_host.
+#
+# Style keys accepted by `style` and `error_style`:
+# fg, bg, bold.
+#
+# Supported colors:
+# black, red, green, yellow, blue, magenta, cyan, white.
+#
+# Icon keys accept an empty string to hide the icon, for example:
+# icon = ""
+
+[layout]
+lines = 2
+
+[layout.line1]
+left = [
+  # SSH-only user and host context. Renders only when SSH_CONNECTION or
+  # SSH_CLIENT is set.
+  "ssh",
+  "dir",
+  "git_branch",
+  "git_status",
+  "rust_version",
+  # Bun, Deno, and Node can all stay in the layout. Detection follows the
+  # Starship-compatible conditions implemented by Nova; Bun/Deno markers
+  # suppress Node.
+  "bun_version",
+  "deno_version",
+  "node_version",
+  "python_version",
+  "nix_shell",
+  "aws",
+  "duration",
+]
+right = ["time"]
+
+[layout.line2]
+left = [
+  # exit_status is optional. prompt_char still turns red on failure by default
+  # even if exit_status is removed from the layout.
+  "exit_status",
+  "prompt_char",
+]
+right = []
+
+# Use user_host instead of ssh when you want local prompts to always show
+# user@host. Example:
+#
+# [layout.line1]
+# left = ["user_host", "dir", "git_branch", "git_status", "prompt_char"]
+# right = ["time"]
+
+[segments.ssh]
+# Styles only the user part. The @host part uses the terminal default color.
+style = { fg = "green", bold = false }
+
+[segments.user_host]
+# Styles only the user part. Add this segment to the layout to render it.
+style = { fg = "green", bold = false }
+
+[segments.dir]
+# Number of visible path components. 0 disables component capping.
+# Home-relative intermediate components are abbreviated:
+# ~/dev/oss/nova -> ~/d/o/nova.
+max_components = 4
+style = { fg = "green", bold = false }
+
+[segments.git_branch]
+icon = ""
+style = { fg = "magenta", bold = true }
+
+[segments.git_status]
+# git_status controls the async git refresh for both git_branch and git_status.
+timeout_ms = 1000
+ttl_ms = 0
+style = { fg = "red", bold = true }
+
+[segments.git_status.icons]
+conflicted = "="
+modified = "!"
+staged = "+"
+untracked = "?"
+stash = "$"
+ahead = "⇡"
+behind = "⇣"
+
+[segments.rust_version]
+icon = ""
+timeout_ms = 1000
+ttl_ms = 300000
+style = { fg = "cyan", bold = true }
+
+[segments.bun_version]
+icon = ""
+timeout_ms = 1000
+ttl_ms = 300000
+style = { fg = "red", bold = true }
+
+[segments.deno_version]
+icon = ""
+timeout_ms = 1000
+ttl_ms = 300000
+style = { fg = "green", bold = true }
+
+[segments.node_version]
+icon = ""
+timeout_ms = 1000
+ttl_ms = 300000
+style = { fg = "green", bold = true }
+
+[segments.python_version]
+icon = ""
+timeout_ms = 1000
+ttl_ms = 300000
+style = { fg = "yellow", bold = true }
+
+[segments.nix_shell]
+icon = ""
+style = { fg = "blue", bold = true }
+
+[segments.aws]
+icon = ""
+style = { fg = "yellow", bold = true }
+
+[segments.duration]
+# Hide command duration below this threshold. Rendered as +999ms, +1.1s, +2s.
+min_ms = 2000
+style = { fg = "white", bold = false }
+
+[segments.time]
+style = { fg = "white", bold = false }
+
+[segments.exit_status]
+style = { fg = "red", bold = true }
+
+[segments.prompt_char]
+# `character` is the fallback prompt symbol.
+character = "❯"
+# Success style. Empty/default style leaves the prompt character in the
+# terminal default color.
+style = { bold = false }
+# Failure style. This wins over `style` when the previous command failed.
+error_style = { fg = "red", bold = true }
+
+[segments.prompt_char.characters]
+# `characters.main` wins over `character` in normal mode.
+main = "❯"
+# `characters.vi_command` wins in vi command mode. `vicmd` is accepted as a
+# compatibility alias.
+vi_command = "❮"

@@ -272,6 +272,12 @@ mod tests {
     }
 
     #[test]
+    fn parses_example_config() {
+        Config::from_toml(include_str!("../../examples/config.toml"))
+            .expect("example config should parse");
+    }
+
+    #[test]
     fn rejects_unsupported_layout_line_counts() {
         let error =
             Config::from_toml("[layout]\nlines = 3\n").expect_err("invalid layout should fail");
