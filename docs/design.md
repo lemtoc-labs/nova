@@ -541,6 +541,9 @@ ttl_ms = 300000                 # per-segment override: [segments.<id>] ttl_ms
 [segments.dir]
 max_components = 4
 style = { fg = "blue", bold = true }
+# Colors accept the named 16-color set, ANSI 256-color indexes ("0".."255"),
+# or truecolor hex strings ("#RRGGBB"). Invalid colors are ignored during
+# lowering and reported as config warnings.
 
 [segments.git_branch]
 icon = ""                     # set to "" to hide the icon

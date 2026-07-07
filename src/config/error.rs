@@ -25,6 +25,7 @@ pub enum ConfigError {
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum ConfigWarning {
     UnknownLayoutSegment { location: String, segment: String },
+    InvalidColor { location: String, color: String },
 }
 
 impl std::fmt::Display for ConfigWarning {
@@ -32,6 +33,9 @@ impl std::fmt::Display for ConfigWarning {
         match self {
             Self::UnknownLayoutSegment { location, segment } => {
                 write!(formatter, "unknown segment `{segment}` in `{location}`")
+            }
+            Self::InvalidColor { location, color } => {
+                write!(formatter, "invalid color `{color}` in `{location}`")
             }
         }
     }

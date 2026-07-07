@@ -24,6 +24,8 @@
 # black, red, green, yellow, blue, magenta, cyan, white.
 # bright_black, bright_red, bright_green, bright_yellow, bright_blue,
 # bright_magenta, bright_cyan, bright_white.
+# 0-255 for ANSI 256-color indexes, for example "202".
+# #RRGGBB for truecolor, for example "#ff8800".
 #
 # Icon keys accept an empty string to hide the icon, for example:
 # icon = ""
