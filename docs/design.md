@@ -321,20 +321,29 @@ pub enum AsyncValue {
     Failed,
 }
 
-pub trait SyncSegment {
+pub trait SyncSegment: Sync {
     fn id(&self) -> &'static str;
     /// Must be cheap and deterministic: no subprocesses, no network,
     /// at most a couple of env reads / stat calls.
     fn render(&self, state: &PromptState, cfg: &SegmentConfig) -> Option<SegmentContent>;
 }
 
-pub trait AsyncSegment {
-    fn id(&self) -> &'static str;
-    /// None = segment not applicable here (e.g. git outside a repo candidate).
-    fn cache_key(&self, state: &PromptState) -> Option<CacheKey>;
+pub struct CollectContext<'a> {
+    pub state: &'a PromptState,
+    pub config: &'a Config,
+    pub config_generation: u64,
+    pub deadline: Instant,
+}
+
+pub trait AsyncSegmentSpec: Send + Sync {
+    fn render_ids(&self) -> &'static [&'static str];
+    fn primary_id(&self) -> &'static str;
+    fn cache_key(&self, render_id: &str, state: &PromptState, config_generation: u64)
+        -> Option<CacheKey>;
     /// Runs on a pool thread. May block, must respect the deadline.
-    fn collect(&self, state: &PromptState, deadline: Instant)
-        -> Result<SegmentContent, CollectError>;
+    fn collect(&self, ctx: &CollectContext<'_>) -> Vec<AsyncJobSegment>;
+    fn default_ttl(&self) -> Duration;
+    fn default_timeout(&self) -> Duration;
 }
 
 /// Structured output; the zsh adapter never sees this, only its lowering.
@@ -655,6 +664,9 @@ order; do not start async work before the sync renderer is snapshot-tested.
     gating with environment credentials, credentials files, `credential_process`,
     SSO, and `source_profile`. See [`aws-format.md`](aws-format.md) for AWS
     format variables and planned credential duration support.
+  - Adding a runtime/tool async segment is three steps: implement a unit struct
+    with `AsyncSegmentSpec`, reuse or add collector/render helpers, then add one
+    entry to `ASYNC_SEGMENTS`.
 - **M6 — Performance.** `zsh-bench` against the budgets in requirements,
   fast-path microbenchmarks, tuning, measured results documented.
 

@@ -7,6 +7,7 @@ use std::process::ExitCode;
 use nova::config::error::ConfigWarning;
 use nova::config::load::load_config;
 use nova::render::render;
+use nova::segments::known_segment_ids;
 use nova::state::{Keymap, PromptState};
 use nova::worker::{WorkerOptions, run as run_worker_loop};
 use nova::zsh_init::render_init_script;
@@ -291,7 +292,7 @@ impl CheckArgs {
 
     fn check(self) -> Result<Vec<ConfigWarning>, String> {
         let config = load_config(self.config_path.as_deref()).map_err(|error| error.to_string())?;
-        Ok(config.warnings())
+        Ok(config.warnings(known_segment_ids()))
     }
 }
 

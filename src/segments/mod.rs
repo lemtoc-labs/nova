@@ -10,12 +10,86 @@ pub mod ssh;
 pub mod time;
 pub mod user_host;
 
-use crate::config::{SegmentConfig, StyleConfig};
+use std::sync::LazyLock;
+use std::time::{Duration, Instant};
+
+use crate::cache::CacheKey;
+use crate::config::{Config, SegmentConfig, StyleConfig};
 use crate::state::PromptState;
 
-pub trait SyncSegment {
+pub trait SyncSegment: Sync {
     fn id(&self) -> &'static str;
     fn render(&self, state: &PromptState, config: &SegmentConfig) -> Option<SegmentContent>;
+}
+
+pub struct CollectContext<'a> {
+    pub state: &'a PromptState,
+    pub config: &'a Config,
+    pub config_generation: u64,
+    pub deadline: Instant,
+}
+
+pub trait AsyncSegmentSpec: Send + Sync {
+    fn render_ids(&self) -> &'static [&'static str];
+    fn primary_id(&self) -> &'static str;
+    fn cache_key(
+        &self,
+        render_id: &str,
+        state: &PromptState,
+        config_generation: u64,
+    ) -> Option<CacheKey>;
+    fn collect(&self, ctx: &CollectContext<'_>) -> Vec<AsyncJobSegment>;
+    fn default_ttl(&self) -> Duration;
+    fn default_timeout(&self) -> Duration;
+}
+
+#[derive(Debug)]
+pub struct AsyncJobSegment {
+    pub key: CacheKey,
+    pub content: Result<Option<SegmentContent>, AsyncSegmentFailure>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AsyncSegmentFailure {
+    Failed,
+}
+
+pub static SYNC_SEGMENTS: &[&dyn SyncSegment] = &[
+    &ssh::SshSegment,
+    &dir::DirSegment,
+    &runtime::NixShellSegment,
+    &runtime::AwsSegment,
+    &duration::DurationSegment,
+    &time::TimeSegment,
+    &exit_status::ExitStatusSegment,
+    &prompt_char::PromptCharSegment,
+    &user_host::UserHostSegment,
+];
+
+pub static ASYNC_SEGMENTS: &[&dyn AsyncSegmentSpec] = &[
+    &git::GitSegment,
+    &runtime::RustSegment,
+    &runtime::BunSegment,
+    &runtime::DenoSegment,
+    &runtime::NodeSegment,
+    &runtime::PythonSegment,
+];
+
+static KNOWN_SEGMENT_IDS: LazyLock<Vec<&'static str>> = LazyLock::new(|| {
+    let mut ids = SYNC_SEGMENTS
+        .iter()
+        .map(|segment| segment.id())
+        .collect::<Vec<_>>();
+    for segment in ASYNC_SEGMENTS {
+        ids.extend_from_slice(segment.render_ids());
+    }
+    ids.sort_unstable();
+    ids.dedup();
+    ids
+});
+
+pub fn known_segment_ids() -> &'static [&'static str] {
+    KNOWN_SEGMENT_IDS.as_slice()
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -101,18 +175,10 @@ pub fn render_sync_segment(
     state: &PromptState,
     config: &SegmentConfig,
 ) -> Option<SegmentContent> {
-    match id {
-        "dir" => dir::DirSegment.render(state, config),
-        "duration" => duration::DurationSegment.render(state, config),
-        "exit_status" => exit_status::ExitStatusSegment.render(state, config),
-        "aws" => runtime::render_aws(&state.env, config),
-        "nix_shell" => runtime::render_nix_shell(&state.env, config),
-        "prompt_char" => prompt_char::PromptCharSegment.render(state, config),
-        "ssh" => ssh::SshSegment.render(state, config),
-        "time" => time::TimeSegment.render(state, config),
-        "user_host" => user_host::UserHostSegment.render(state, config),
-        _ => None,
-    }
+    SYNC_SEGMENTS
+        .iter()
+        .find(|segment| segment.id() == id)
+        .and_then(|segment| segment.render(state, config))
 }
 
 fn strip_control_chars(input: &str) -> String {

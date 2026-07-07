@@ -11,11 +11,15 @@ use wait_timeout::ChildExt;
 
 use crate::cache::CacheKey;
 use crate::config::SegmentConfig;
-use crate::segments::{SegmentContent, Style, label_with_icon};
+use crate::segments::{
+    AsyncJobSegment, AsyncSegmentFailure, AsyncSegmentSpec, CollectContext, SegmentContent, Style,
+    label_with_icon,
+};
 
 const GIT_BRANCH_SEGMENT_ID: &str = "git_branch";
 const GIT_BRANCH_ICON: &str = "";
 const GIT_STATUS_SEGMENT_ID: &str = "git_status";
+const GIT_RENDER_IDS: &[&str] = &[GIT_BRANCH_SEGMENT_ID, GIT_STATUS_SEGMENT_ID];
 const GIT_STATUS_ARGS: &[&str] = &[
     "--no-optional-locks",
     "status",
@@ -47,6 +51,90 @@ impl GitStatus {
             || self.stashed > 0
             || self.ahead > 0
             || self.behind > 0
+    }
+}
+
+pub struct GitSegment;
+
+impl AsyncSegmentSpec for GitSegment {
+    fn render_ids(&self) -> &'static [&'static str] {
+        GIT_RENDER_IDS
+    }
+
+    fn primary_id(&self) -> &'static str {
+        GIT_STATUS_SEGMENT_ID
+    }
+
+    fn cache_key(
+        &self,
+        render_id: &str,
+        state: &crate::state::PromptState,
+        config_generation: u64,
+    ) -> Option<CacheKey> {
+        let status_key = git_cache_key(&state.cwd, config_generation)?;
+        match render_id {
+            GIT_BRANCH_SEGMENT_ID => Some(git_branch_key_from_status_key(&status_key)),
+            GIT_STATUS_SEGMENT_ID => Some(status_key),
+            _ => None,
+        }
+    }
+
+    fn collect(&self, ctx: &CollectContext<'_>) -> Vec<AsyncJobSegment> {
+        let Some(status_key) =
+            self.cache_key(GIT_STATUS_SEGMENT_ID, ctx.state, ctx.config_generation)
+        else {
+            return Vec::new();
+        };
+        let branch_key = git_branch_key_from_status_key(&status_key);
+        let branch_config = ctx.config.segment(GIT_BRANCH_SEGMENT_ID);
+        let status_config = ctx.config.segment(GIT_STATUS_SEGMENT_ID);
+
+        let status = match collect_git_status(&ctx.state.cwd, ctx.deadline) {
+            Ok(Some(status)) => status,
+            Ok(None) => {
+                return vec![
+                    AsyncJobSegment {
+                        key: branch_key,
+                        content: Ok(None),
+                    },
+                    AsyncJobSegment {
+                        key: status_key,
+                        content: Ok(None),
+                    },
+                ];
+            }
+            Err(_error) => {
+                return vec![
+                    AsyncJobSegment {
+                        key: branch_key,
+                        content: Err(AsyncSegmentFailure::Failed),
+                    },
+                    AsyncJobSegment {
+                        key: status_key,
+                        content: Err(AsyncSegmentFailure::Failed),
+                    },
+                ];
+            }
+        };
+
+        vec![
+            AsyncJobSegment {
+                key: branch_key,
+                content: Ok(render_git_branch(&status, branch_config)),
+            },
+            AsyncJobSegment {
+                key: status_key,
+                content: Ok(render_git_status(&status, status_config)),
+            },
+        ]
+    }
+
+    fn default_ttl(&self) -> Duration {
+        Duration::ZERO
+    }
+
+    fn default_timeout(&self) -> Duration {
+        Duration::from_secs(1)
     }
 }
 
@@ -98,6 +186,14 @@ pub fn git_cache_key(cwd: &Path, config_generation: u64) -> Option<CacheKey> {
         root.to_string_lossy(),
         config_generation,
     ))
+}
+
+fn git_branch_key_from_status_key(status_key: &CacheKey) -> CacheKey {
+    CacheKey::new(
+        GIT_BRANCH_SEGMENT_ID,
+        status_key.source.clone(),
+        status_key.config_generation,
+    )
 }
 
 pub fn find_repository_root(cwd: &Path) -> Option<PathBuf> {

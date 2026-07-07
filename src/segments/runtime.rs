@@ -14,8 +14,11 @@ use wait_timeout::ChildExt;
 
 use crate::cache::CacheKey;
 use crate::config::SegmentConfig;
-use crate::segments::{SegmentContent, Style, label_with_icon};
-use crate::state::PromptEnv;
+use crate::segments::{
+    AsyncJobSegment, AsyncSegmentFailure, AsyncSegmentSpec, CollectContext, SegmentContent, Style,
+    SyncSegment, label_with_icon,
+};
+use crate::state::{PromptEnv, PromptState};
 
 const RUST_VERSION_SEGMENT_ID: &str = "rust_version";
 const RUST_VERSION_ICON: &str = "";
@@ -70,6 +73,8 @@ const NODE_EXCLUDED_FILES: &[&str] = &[
 ];
 const NODE_DETECT_FOLDERS: &[&str] = &["node_modules"];
 const NODE_EXCLUDED_FOLDERS: &[&str] = &["esy.lock"];
+const RUNTIME_REFRESH_TTL: Duration = Duration::from_secs(300);
+const RUNTIME_TIMEOUT: Duration = Duration::from_secs(1);
 
 #[derive(Debug, Error)]
 pub enum RuntimeCollectError {
@@ -87,6 +92,251 @@ pub enum RuntimeCollectError {
     MissingStdout,
 }
 
+pub struct RustSegment;
+pub struct BunSegment;
+pub struct DenoSegment;
+pub struct NodeSegment;
+pub struct PythonSegment;
+pub struct NixShellSegment;
+pub struct AwsSegment;
+
+impl AsyncSegmentSpec for RustSegment {
+    fn render_ids(&self) -> &'static [&'static str] {
+        &[RUST_VERSION_SEGMENT_ID]
+    }
+
+    fn primary_id(&self) -> &'static str {
+        RUST_VERSION_SEGMENT_ID
+    }
+
+    fn cache_key(
+        &self,
+        render_id: &str,
+        state: &PromptState,
+        config_generation: u64,
+    ) -> Option<CacheKey> {
+        (render_id == self.primary_id())
+            .then(|| rust_cache_key(&state.cwd, state.env.path.as_deref(), config_generation))
+            .flatten()
+    }
+
+    fn collect(&self, ctx: &CollectContext<'_>) -> Vec<AsyncJobSegment> {
+        let Some(key) = self.cache_key(self.primary_id(), ctx.state, ctx.config_generation) else {
+            return Vec::new();
+        };
+        let config = ctx.config.segment(self.primary_id());
+        collected_version_segment(
+            key,
+            collect_rust_version(&ctx.state.cwd, ctx.state.env.path.as_deref(), ctx.deadline),
+            |version| render_rust_version(version, config),
+        )
+    }
+
+    fn default_ttl(&self) -> Duration {
+        RUNTIME_REFRESH_TTL
+    }
+
+    fn default_timeout(&self) -> Duration {
+        RUNTIME_TIMEOUT
+    }
+}
+
+impl AsyncSegmentSpec for BunSegment {
+    fn render_ids(&self) -> &'static [&'static str] {
+        &[BUN_VERSION_SEGMENT_ID]
+    }
+
+    fn primary_id(&self) -> &'static str {
+        BUN_VERSION_SEGMENT_ID
+    }
+
+    fn cache_key(
+        &self,
+        render_id: &str,
+        state: &PromptState,
+        config_generation: u64,
+    ) -> Option<CacheKey> {
+        (render_id == self.primary_id())
+            .then(|| bun_cache_key(&state.cwd, state.env.path.as_deref(), config_generation))
+            .flatten()
+    }
+
+    fn collect(&self, ctx: &CollectContext<'_>) -> Vec<AsyncJobSegment> {
+        let Some(key) = self.cache_key(self.primary_id(), ctx.state, ctx.config_generation) else {
+            return Vec::new();
+        };
+        let config = ctx.config.segment(self.primary_id());
+        collected_version_segment(
+            key,
+            collect_bun_version(&ctx.state.cwd, ctx.state.env.path.as_deref(), ctx.deadline),
+            |version| render_bun_version(version, config),
+        )
+    }
+
+    fn default_ttl(&self) -> Duration {
+        RUNTIME_REFRESH_TTL
+    }
+
+    fn default_timeout(&self) -> Duration {
+        RUNTIME_TIMEOUT
+    }
+}
+
+impl AsyncSegmentSpec for DenoSegment {
+    fn render_ids(&self) -> &'static [&'static str] {
+        &[DENO_VERSION_SEGMENT_ID]
+    }
+
+    fn primary_id(&self) -> &'static str {
+        DENO_VERSION_SEGMENT_ID
+    }
+
+    fn cache_key(
+        &self,
+        render_id: &str,
+        state: &PromptState,
+        config_generation: u64,
+    ) -> Option<CacheKey> {
+        (render_id == self.primary_id())
+            .then(|| deno_cache_key(&state.cwd, state.env.path.as_deref(), config_generation))
+            .flatten()
+    }
+
+    fn collect(&self, ctx: &CollectContext<'_>) -> Vec<AsyncJobSegment> {
+        let Some(key) = self.cache_key(self.primary_id(), ctx.state, ctx.config_generation) else {
+            return Vec::new();
+        };
+        let config = ctx.config.segment(self.primary_id());
+        collected_version_segment(
+            key,
+            collect_deno_version(&ctx.state.cwd, ctx.state.env.path.as_deref(), ctx.deadline),
+            |version| render_deno_version(version, config),
+        )
+    }
+
+    fn default_ttl(&self) -> Duration {
+        RUNTIME_REFRESH_TTL
+    }
+
+    fn default_timeout(&self) -> Duration {
+        RUNTIME_TIMEOUT
+    }
+}
+
+impl AsyncSegmentSpec for NodeSegment {
+    fn render_ids(&self) -> &'static [&'static str] {
+        &[NODE_VERSION_SEGMENT_ID]
+    }
+
+    fn primary_id(&self) -> &'static str {
+        NODE_VERSION_SEGMENT_ID
+    }
+
+    fn cache_key(
+        &self,
+        render_id: &str,
+        state: &PromptState,
+        config_generation: u64,
+    ) -> Option<CacheKey> {
+        (render_id == self.primary_id())
+            .then(|| node_cache_key(&state.cwd, state.env.path.as_deref(), config_generation))
+            .flatten()
+    }
+
+    fn collect(&self, ctx: &CollectContext<'_>) -> Vec<AsyncJobSegment> {
+        let Some(key) = self.cache_key(self.primary_id(), ctx.state, ctx.config_generation) else {
+            return Vec::new();
+        };
+        let config = ctx.config.segment(self.primary_id());
+        collected_version_segment(
+            key,
+            collect_node_version(&ctx.state.cwd, ctx.state.env.path.as_deref(), ctx.deadline),
+            |version| render_node_version(version, config),
+        )
+    }
+
+    fn default_ttl(&self) -> Duration {
+        RUNTIME_REFRESH_TTL
+    }
+
+    fn default_timeout(&self) -> Duration {
+        RUNTIME_TIMEOUT
+    }
+}
+
+impl AsyncSegmentSpec for PythonSegment {
+    fn render_ids(&self) -> &'static [&'static str] {
+        &[PYTHON_VERSION_SEGMENT_ID]
+    }
+
+    fn primary_id(&self) -> &'static str {
+        PYTHON_VERSION_SEGMENT_ID
+    }
+
+    fn cache_key(
+        &self,
+        render_id: &str,
+        state: &PromptState,
+        config_generation: u64,
+    ) -> Option<CacheKey> {
+        (render_id == self.primary_id())
+            .then(|| {
+                python_cache_key(
+                    &state.cwd,
+                    state.env.virtual_env.as_deref(),
+                    state.env.path.as_deref(),
+                    config_generation,
+                )
+            })
+            .flatten()
+    }
+
+    fn collect(&self, ctx: &CollectContext<'_>) -> Vec<AsyncJobSegment> {
+        let Some(key) = self.cache_key(self.primary_id(), ctx.state, ctx.config_generation) else {
+            return Vec::new();
+        };
+        let config = ctx.config.segment(self.primary_id());
+        collected_version_segment(
+            key,
+            collect_python_version(
+                &ctx.state.cwd,
+                ctx.state.env.virtual_env.as_deref(),
+                ctx.state.env.path.as_deref(),
+                ctx.deadline,
+            ),
+            |version| render_python_version(version, config),
+        )
+    }
+
+    fn default_ttl(&self) -> Duration {
+        RUNTIME_REFRESH_TTL
+    }
+
+    fn default_timeout(&self) -> Duration {
+        RUNTIME_TIMEOUT
+    }
+}
+
+impl SyncSegment for NixShellSegment {
+    fn id(&self) -> &'static str {
+        NIX_SHELL_SEGMENT_ID
+    }
+
+    fn render(&self, state: &PromptState, config: &SegmentConfig) -> Option<SegmentContent> {
+        render_nix_shell(&state.env, config)
+    }
+}
+
+impl SyncSegment for AwsSegment {
+    fn id(&self) -> &'static str {
+        AWS_SEGMENT_ID
+    }
+
+    fn render(&self, state: &PromptState, config: &SegmentConfig) -> Option<SegmentContent> {
+        render_aws(&state.env, config)
+    }
+}
+
 pub fn rust_cache_key(cwd: &Path, path: Option<&str>, config_generation: u64) -> Option<CacheKey> {
     let root = find_rust_project_root(cwd)?;
     Some(CacheKey::new(
@@ -94,6 +344,19 @@ pub fn rust_cache_key(cwd: &Path, path: Option<&str>, config_generation: u64) ->
         runtime_cache_source(root.to_string_lossy(), path),
         config_generation,
     ))
+}
+
+fn collected_version_segment<E>(
+    key: CacheKey,
+    result: Result<Option<String>, E>,
+    render: impl FnOnce(&str) -> Option<SegmentContent>,
+) -> Vec<AsyncJobSegment> {
+    vec![AsyncJobSegment {
+        key,
+        content: result
+            .map(|version| version.and_then(|version| render(&version)))
+            .map_err(|_error| AsyncSegmentFailure::Failed),
+    }]
 }
 
 pub fn node_cache_key(cwd: &Path, path: Option<&str>, config_generation: u64) -> Option<CacheKey> {
@@ -293,17 +556,17 @@ fn collect_node_version_with_command_and_path(
     command: &Path,
     path: Option<&str>,
 ) -> Result<Option<String>, RuntimeCollectError> {
-    if !is_node_project_dir(cwd) {
-        return Ok(None);
-    }
-
-    let timeout = remaining_time(deadline)?;
-    let Some(output) = collect_optional_command_output(command, NODE_ARGS, cwd, timeout, path)?
-    else {
-        return Ok(None);
-    };
-
-    Ok(parse_node_version(&String::from_utf8_lossy(&output)))
+    collect_detected_command_version(
+        cwd,
+        deadline,
+        command,
+        path,
+        RuntimeCommandSpec {
+            args: NODE_ARGS,
+            detect: is_node_project_dir,
+            parse: parse_node_version,
+        },
+    )
 }
 
 #[cfg(test)]
@@ -321,17 +584,17 @@ fn collect_bun_version_with_command_and_path(
     command: &Path,
     path: Option<&str>,
 ) -> Result<Option<String>, RuntimeCollectError> {
-    if !is_bun_project_dir(cwd) {
-        return Ok(None);
-    }
-
-    let timeout = remaining_time(deadline)?;
-    let Some(output) = collect_optional_command_output(command, BUN_ARGS, cwd, timeout, path)?
-    else {
-        return Ok(None);
-    };
-
-    Ok(parse_bun_version(&String::from_utf8_lossy(&output)))
+    collect_detected_command_version(
+        cwd,
+        deadline,
+        command,
+        path,
+        RuntimeCommandSpec {
+            args: BUN_ARGS,
+            detect: is_bun_project_dir,
+            parse: parse_bun_version,
+        },
+    )
 }
 
 #[cfg(test)]
@@ -349,17 +612,17 @@ fn collect_deno_version_with_command_and_path(
     command: &Path,
     path: Option<&str>,
 ) -> Result<Option<String>, RuntimeCollectError> {
-    if !is_deno_project_dir(cwd) {
-        return Ok(None);
-    }
-
-    let timeout = remaining_time(deadline)?;
-    let Some(output) = collect_optional_command_output(command, DENO_ARGS, cwd, timeout, path)?
-    else {
-        return Ok(None);
-    };
-
-    Ok(parse_deno_version(&String::from_utf8_lossy(&output)))
+    collect_detected_command_version(
+        cwd,
+        deadline,
+        command,
+        path,
+        RuntimeCommandSpec {
+            args: DENO_ARGS,
+            detect: is_deno_project_dir,
+            parse: parse_deno_version,
+        },
+    )
 }
 
 #[cfg(test)]
@@ -398,6 +661,33 @@ fn collect_python_version_with_commands_and_path(
     }
 
     Ok(None)
+}
+
+#[derive(Clone, Copy)]
+struct RuntimeCommandSpec {
+    args: &'static [&'static str],
+    detect: fn(&Path) -> bool,
+    parse: fn(&str) -> Option<String>,
+}
+
+fn collect_detected_command_version(
+    cwd: &Path,
+    deadline: Instant,
+    command: &Path,
+    path: Option<&str>,
+    spec: RuntimeCommandSpec,
+) -> Result<Option<String>, RuntimeCollectError> {
+    if !(spec.detect)(cwd) {
+        return Ok(None);
+    }
+
+    let timeout = remaining_time(deadline)?;
+    let Some(output) = collect_optional_command_output(command, spec.args, cwd, timeout, path)?
+    else {
+        return Ok(None);
+    };
+
+    Ok((spec.parse)(&String::from_utf8_lossy(&output)))
 }
 
 fn collect_command_output(

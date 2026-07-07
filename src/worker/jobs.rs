@@ -25,6 +25,7 @@ pub enum JobOutcome<T> {
 pub struct JobResult<T> {
     pub generation: u64,
     pub key: CacheKey,
+    pub fail_keys: Vec<CacheKey>,
     pub started_at: Instant,
     pub finished_at: Instant,
     pub outcome: JobOutcome<T>,
@@ -38,6 +39,7 @@ pub struct JobPool<T> {
 struct Job<T> {
     generation: u64,
     key: CacheKey,
+    fail_keys: Vec<CacheKey>,
     timeout: Duration,
     run: Box<dyn FnOnce(Instant) -> T + Send + 'static>,
 }
@@ -73,6 +75,20 @@ where
     where
         F: FnOnce(Instant) -> T + Send + 'static,
     {
+        self.spawn_with_fail_keys(generation, key.clone(), vec![key], timeout, run)
+    }
+
+    pub fn spawn_with_fail_keys<F>(
+        &self,
+        generation: u64,
+        key: CacheKey,
+        fail_keys: Vec<CacheKey>,
+        timeout: Duration,
+        run: F,
+    ) -> Result<(), JobPoolError>
+    where
+        F: FnOnce(Instant) -> T + Send + 'static,
+    {
         let Some(sender) = &self.sender else {
             return Err(JobPoolError::Closed);
         };
@@ -81,6 +97,7 @@ where
             .send(Job {
                 generation,
                 key,
+                fail_keys,
                 timeout,
                 run: Box::new(run),
             })
@@ -128,6 +145,7 @@ where
             let result = JobResult {
                 generation: job.generation,
                 key: job.key,
+                fail_keys: job.fail_keys,
                 started_at,
                 finished_at: Instant::now(),
                 outcome,
