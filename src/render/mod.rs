@@ -131,7 +131,7 @@ fn render_segment(
     state: &PromptState,
     async_values: Option<&AsyncSegmentValues>,
 ) -> Option<SegmentContent> {
-    render_sync_segment(id, state, &config.segment(id)).or_else(|| {
+    render_sync_segment(id, state, config.segment(id)).or_else(|| {
         async_values
             .and_then(|values| values.get(id))
             .and_then(async_value_content)

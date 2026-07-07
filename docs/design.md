@@ -443,8 +443,8 @@ Owned by the worker. One layer for now.
   cwd, the config generation, and segment-relevant markers (lockfile paths,
   profile names).
 - Value carries `collected_at` and the config generation.
-- Bounded at 128 entries. Eviction: drop the oldest `collected_at` when full.
-  (A true LRU is an optional upgrade; do not start there.)
+- Bounded at 128 entries. Eviction drops the least recently used entry; cache
+  reads touch `last_used` while freshness still uses `collected_at`.
 - **Stale-while-revalidate**: an expired entry still renders as `Stale` while
   a refresh job runs.
 - **Inflight set**: a `HashSet<CacheKey>` prevents duplicate concurrent jobs
@@ -476,16 +476,19 @@ enum Event {
   pool.
 - The main loop is the only writer to the `resp` FIFO and the only owner of
   the cache — no locks anywhere.
-- On each request: `stat` the config file (mtime + size) and reload on change;
+- Config discovery (`$NOVA_CONFIG`, `$XDG_CONFIG_HOME`, `$HOME`) is resolved
+  once when the worker starts. On each request the worker `stat`s that resolved
+  config path (mtime + size) and reparses only when the fingerprint changes;
   render; reply; schedule refresh jobs for stale/missing async segments.
 
 ## zsh Adapter
 
 Responsibilities (and nothing more): register `precmd`/`preexec`; capture `$?`
 first; measure duration via `zsh/datetime` `EPOCHREALTIME` deltas; capture
-`PWD`, `COLUMNS`, keymap; spawn/respawn the worker; lazily open FIFO fds
-(always `sysopen -o nonblock -o cloexec`, never a blocking open); do protocol
-I/O only with `sysread`/`syswrite`; send
+`PWD`, `COLUMNS`, keymap; eagerly spawn the worker for interactive shells and
+respawn it after failures; lazily open FIFO fds on the first prompt (always
+`sysopen -o nonblock -o cloexec`, never a blocking open); do protocol I/O only
+with `sysread`/`syswrite`; send
 requests; wait for the first reply with `zselect` (≤ 50 ms), else apply the
 fallback prompt `%~ %# `; watch the resp fd with `zle -F`; apply
 `PROMPT`/`RPROMPT`; call `zle reset-prompt` only when zle is active and the

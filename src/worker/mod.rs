@@ -7,7 +7,7 @@ use std::collections::BTreeSet;
 use std::fs::OpenOptions;
 use std::io::{Read, Write};
 use std::path::PathBuf;
-use std::sync::mpsc;
+use std::sync::{Arc, mpsc};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -15,7 +15,7 @@ use thiserror::Error;
 
 use crate::cache::{AsyncValue, CacheKey, SegmentCache};
 use crate::config::error::ConfigWarning;
-use crate::config::load::load_config;
+use crate::config::load::{ConfigSnapshot, ConfigSource};
 use crate::config::{Config, DEFAULT_INITIAL_WAIT_MS, SegmentConfig};
 use crate::render::{AsyncSegmentValues, LoweredPrompt, render_with_async};
 use crate::segments::SegmentContent;
@@ -209,7 +209,7 @@ fn handle_request_chunk(
         active_prompt.replace(ActivePrompt {
             generation: request.generation,
             state: request.state.clone(),
-            config: config.clone(),
+            config: Arc::clone(&config),
             config_generation: worker_config.generation,
             output,
         });
@@ -230,20 +230,33 @@ fn handle_request_chunk(
 struct ActivePrompt {
     generation: u64,
     state: PromptState,
-    config: Config,
+    config: Arc<Config>,
     config_generation: u64,
     output: LoweredPrompt,
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 struct ConfigState {
-    config: Config,
+    source: ConfigSource,
+    snapshot: Option<ConfigSnapshot>,
+    config: Arc<Config>,
     generation: u64,
+}
+
+impl Default for ConfigState {
+    fn default() -> Self {
+        Self {
+            source: ConfigSource::discover(),
+            snapshot: None,
+            config: Arc::new(Config::default()),
+            generation: 0,
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
 struct WorkerConfig {
-    config: Config,
+    config: Arc<Config>,
     generation: u64,
 }
 
@@ -293,7 +306,7 @@ fn complete_job_result(result: JobResult<AsyncJobSegments>, cache: &mut SegmentC
 }
 
 fn write_update_if_active(
-    cache: &SegmentCache,
+    cache: &mut SegmentCache,
     response: &mut impl Write,
     active_prompt: &mut Option<ActivePrompt>,
 ) -> Result<(), WorkerError> {
@@ -351,22 +364,52 @@ fn load_worker_config(
     warned_config_error: &mut bool,
     warned_config_warnings: &mut BTreeSet<ConfigWarning>,
 ) -> WorkerConfig {
-    let config = load_config(None).unwrap_or_else(|error| {
-        if !*warned_config_error {
-            eprintln!("nova: {error}; using built-in defaults");
-            *warned_config_error = true;
+    let snapshot = match config_state.source.snapshot() {
+        Ok(snapshot) => snapshot,
+        Err(error) => {
+            if !*warned_config_error {
+                eprintln!("nova: {error}; using built-in defaults");
+                *warned_config_error = true;
+            }
+            let config = Config::default();
+            if *config_state.config != config {
+                config_state.generation = config_state.generation.saturating_add(1);
+                config_state.config = Arc::new(config);
+            }
+            return WorkerConfig {
+                config: Arc::clone(&config_state.config),
+                generation: config_state.generation,
+            };
         }
-        Config::default()
-    });
-    warn_config_warnings(&config, warned_config_warnings);
+    };
 
-    if config != config_state.config {
-        config_state.generation = config_state.generation.saturating_add(1);
-        config_state.config = config;
+    if config_state.snapshot.as_ref() == Some(&snapshot) {
+        return WorkerConfig {
+            config: Arc::clone(&config_state.config),
+            generation: config_state.generation,
+        };
     }
 
+    let config = config_state
+        .source
+        .load_snapshot(&snapshot)
+        .unwrap_or_else(|error| {
+            if !*warned_config_error {
+                eprintln!("nova: {error}; using built-in defaults");
+                *warned_config_error = true;
+            }
+            Config::default()
+        });
+    warn_config_warnings(&config, warned_config_warnings);
+
+    if *config_state.config != config {
+        config_state.generation = config_state.generation.saturating_add(1);
+        config_state.config = Arc::new(config);
+    }
+    config_state.snapshot = Some(snapshot);
+
     WorkerConfig {
-        config: config_state.config.clone(),
+        config: Arc::clone(&config_state.config),
         generation: config_state.generation,
     }
 }
@@ -380,7 +423,7 @@ fn warn_config_warnings(config: &Config, warned_config_warnings: &mut BTreeSet<C
 }
 
 fn async_values(
-    cache: &SegmentCache,
+    cache: &mut SegmentCache,
     state: &PromptState,
     config: &Config,
     config_generation: u64,
@@ -393,7 +436,7 @@ fn async_values(
     if config_uses_any_segment(config, &["git_branch", "git_status"])
         && let Some(status_key) = git_cache_key(cwd, config_generation)
     {
-        let ttl = segment_ttl(&config.segment("git_status"), GIT_REFRESH_TTL);
+        let ttl = segment_ttl(config.segment("git_status"), GIT_REFRESH_TTL);
         let branch_key = git_branch_key_from_status_key(&status_key);
         values.insert(
             "git_branch".to_string(),
@@ -408,21 +451,21 @@ fn async_values(
     if config_uses_segment(config, "rust_version")
         && let Some(key) = rust_cache_key(cwd, path, config_generation)
     {
-        let ttl = segment_ttl(&config.segment("rust_version"), RUNTIME_REFRESH_TTL);
+        let ttl = segment_ttl(config.segment("rust_version"), RUNTIME_REFRESH_TTL);
         values.insert("rust_version".to_string(), cache.lookup(&key, now, ttl));
     }
 
     if config_uses_segment(config, "bun_version")
         && let Some(key) = bun_cache_key(cwd, path, config_generation)
     {
-        let ttl = segment_ttl(&config.segment("bun_version"), RUNTIME_REFRESH_TTL);
+        let ttl = segment_ttl(config.segment("bun_version"), RUNTIME_REFRESH_TTL);
         values.insert("bun_version".to_string(), cache.lookup(&key, now, ttl));
     }
 
     if config_uses_segment(config, "deno_version")
         && let Some(key) = deno_cache_key(cwd, path, config_generation)
     {
-        let ttl = segment_ttl(&config.segment("deno_version"), RUNTIME_REFRESH_TTL);
+        let ttl = segment_ttl(config.segment("deno_version"), RUNTIME_REFRESH_TTL);
         values.insert("deno_version".to_string(), cache.lookup(&key, now, ttl));
     }
 
@@ -434,14 +477,14 @@ fn async_values(
             config_generation,
         )
     {
-        let ttl = segment_ttl(&config.segment("python_version"), RUNTIME_REFRESH_TTL);
+        let ttl = segment_ttl(config.segment("python_version"), RUNTIME_REFRESH_TTL);
         values.insert("python_version".to_string(), cache.lookup(&key, now, ttl));
     }
 
     if config_uses_segment(config, "node_version")
         && let Some(key) = node_cache_key(cwd, path, config_generation)
     {
-        let ttl = segment_ttl(&config.segment("node_version"), RUNTIME_REFRESH_TTL);
+        let ttl = segment_ttl(config.segment("node_version"), RUNTIME_REFRESH_TTL);
         values.insert("node_version".to_string(), cache.lookup(&key, now, ttl));
     }
 
@@ -530,7 +573,7 @@ fn schedule_git_refresh(
         return;
     };
 
-    let status_config = config.segment("git_status");
+    let status_config = config.segment("git_status").clone();
     let ttl = segment_ttl(&status_config, GIT_REFRESH_TTL);
     if !cache.needs_refresh(&status_key, Instant::now(), ttl) {
         return;
@@ -540,7 +583,7 @@ fn schedule_git_refresh(
     let branch_key = git_branch_key_from_status_key(&status_key);
     let job_status_key = status_key.clone();
     let job_branch_key = branch_key.clone();
-    let branch_config = config.segment("git_branch");
+    let branch_config = config.segment("git_branch").clone();
     let timeout = segment_timeout(&status_config, GIT_TIMEOUT);
     let spawn_result = pool.spawn(generation, status_key.clone(), timeout, move |deadline| {
         let status = match collect_git_status(&cwd, deadline) {
@@ -612,7 +655,7 @@ fn schedule_rust_refresh(
         return;
     };
 
-    let rust_config = config.segment("rust_version");
+    let rust_config = config.segment("rust_version").clone();
     let ttl = segment_ttl(&rust_config, RUNTIME_REFRESH_TTL);
     if !cache.needs_refresh(&key, Instant::now(), ttl) {
         return;
@@ -656,7 +699,7 @@ fn schedule_node_refresh(
         return;
     };
 
-    let node_config = config.segment("node_version");
+    let node_config = config.segment("node_version").clone();
     let ttl = segment_ttl(&node_config, RUNTIME_REFRESH_TTL);
     if !cache.needs_refresh(&key, Instant::now(), ttl) {
         return;
@@ -700,7 +743,7 @@ fn schedule_bun_refresh(
         return;
     };
 
-    let bun_config = config.segment("bun_version");
+    let bun_config = config.segment("bun_version").clone();
     let ttl = segment_ttl(&bun_config, RUNTIME_REFRESH_TTL);
     if !cache.needs_refresh(&key, Instant::now(), ttl) {
         return;
@@ -744,7 +787,7 @@ fn schedule_deno_refresh(
         return;
     };
 
-    let deno_config = config.segment("deno_version");
+    let deno_config = config.segment("deno_version").clone();
     let ttl = segment_ttl(&deno_config, RUNTIME_REFRESH_TTL);
     if !cache.needs_refresh(&key, Instant::now(), ttl) {
         return;
@@ -793,7 +836,7 @@ fn schedule_python_refresh(
         return;
     };
 
-    let python_config = config.segment("python_version");
+    let python_config = config.segment("python_version").clone();
     let ttl = segment_ttl(&python_config, RUNTIME_REFRESH_TTL);
     if !cache.needs_refresh(&key, Instant::now(), ttl) {
         return;
@@ -951,6 +994,86 @@ mod tests {
     }
 
     #[test]
+    fn load_worker_config_reuses_config_when_snapshot_is_unchanged() {
+        let tempdir = tempfile::tempdir().expect("tempdir should be created");
+        let path = tempdir.path().join("config.toml");
+        std::fs::write(
+            &path,
+            r#"
+            [layout]
+            lines = 1
+            "#,
+        )
+        .expect("config should be written");
+        let mut config_state = ConfigState {
+            source: ConfigSource::from_path(Some(path)),
+            ..ConfigState::default()
+        };
+        let mut warned_config_error = false;
+        let mut warned_config_warnings = BTreeSet::new();
+
+        let first = load_worker_config(
+            &mut config_state,
+            &mut warned_config_error,
+            &mut warned_config_warnings,
+        );
+        let second = load_worker_config(
+            &mut config_state,
+            &mut warned_config_error,
+            &mut warned_config_warnings,
+        );
+
+        assert_eq!(first.generation, 1);
+        assert_eq!(second.generation, 1);
+        assert!(Arc::ptr_eq(&first.config, &second.config));
+    }
+
+    #[test]
+    fn load_worker_config_tracks_file_appearance_and_deletion() {
+        let tempdir = tempfile::tempdir().expect("tempdir should be created");
+        let path = tempdir.path().join("config.toml");
+        let mut config_state = ConfigState {
+            source: ConfigSource::from_path(Some(path.clone())),
+            ..ConfigState::default()
+        };
+        let mut warned_config_error = false;
+        let mut warned_config_warnings = BTreeSet::new();
+
+        let missing = load_worker_config(
+            &mut config_state,
+            &mut warned_config_error,
+            &mut warned_config_warnings,
+        );
+        assert_eq!(missing.generation, 0);
+        assert_eq!(missing.config.layout.lines, 2);
+
+        std::fs::write(
+            &path,
+            r#"
+            [layout]
+            lines = 1
+            "#,
+        )
+        .expect("config should be written");
+        let appeared = load_worker_config(
+            &mut config_state,
+            &mut warned_config_error,
+            &mut warned_config_warnings,
+        );
+        assert_eq!(appeared.generation, 1);
+        assert_eq!(appeared.config.layout.lines, 1);
+
+        std::fs::remove_file(&path).expect("config should be removed");
+        let deleted = load_worker_config(
+            &mut config_state,
+            &mut warned_config_error,
+            &mut warned_config_warnings,
+        );
+        assert_eq!(deleted.generation, 2);
+        assert_eq!(deleted.config.layout.lines, 2);
+    }
+
+    #[test]
     fn render_status_is_final_when_no_async_values_are_applicable() {
         let config = Config::default();
 
@@ -1070,14 +1193,14 @@ mod tests {
         let key = rust_cache_key(&state.cwd, None, config_generation)
             .expect("rust cache key should be available");
         let mut cache = SegmentCache::new(4);
-        let initial_values = async_values(&cache, &state, &config, config_generation);
+        let initial_values = async_values(&mut cache, &state, &config, config_generation);
         let output = render_with_async(&config, &state, &initial_values);
         assert!(!output.prompt.contains("1.96.1"));
 
         let mut active_prompt = Some(ActivePrompt {
             generation: 2,
             state,
-            config,
+            config: Arc::new(config),
             config_generation,
             output,
         });
@@ -1168,7 +1291,7 @@ mod tests {
             Instant::now(),
         );
 
-        let initial_values = async_values(&cache, &state, &config, config_generation);
+        let initial_values = async_values(&mut cache, &state, &config, config_generation);
         let output = render_with_async(&config, &state, &initial_values);
         assert_eq!(render_status(&config, &initial_values), RenderStatus::Final);
         assert!(output.prompt.contains("1.95.0"));
@@ -1176,7 +1299,7 @@ mod tests {
         let mut active_prompt = Some(ActivePrompt {
             generation: 2,
             state,
-            config,
+            config: Arc::new(config),
             config_generation,
             output,
         });
@@ -1254,13 +1377,13 @@ mod tests {
         let key = rust_cache_key(&state.cwd, None, config_generation)
             .expect("rust cache key should be available");
         let mut cache = SegmentCache::new(4);
-        let initial_values = async_values(&cache, &state, &config, config_generation);
+        let initial_values = async_values(&mut cache, &state, &config, config_generation);
         let output = render_with_async(&config, &state, &initial_values);
 
         let mut active_prompt = Some(ActivePrompt {
             generation: 2,
             state,
-            config,
+            config: Arc::new(config),
             config_generation,
             output: output.clone(),
         });
@@ -1286,7 +1409,7 @@ mod tests {
         let active_prompt = active_prompt.expect("active prompt should remain");
         assert_eq!(active_prompt.output, output);
         let async_values = async_values(
-            &cache,
+            &mut cache,
             &active_prompt.state,
             &active_prompt.config,
             active_prompt.config_generation,

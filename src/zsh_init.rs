@@ -64,6 +64,18 @@ mod tests {
     }
 
     #[test]
+    fn eagerly_spawns_worker_once_for_interactive_shells() {
+        let script = render_init_script(Path::new("/tmp/nova"));
+
+        assert!(script.contains("_nova_worker_alive && return 0"));
+        assert!(script.contains("if ! _nova_worker_alive; then"));
+        assert!(script.contains("kill \"$_nova_worker_pid\" 2>/dev/null || true"));
+        assert!(script.contains(
+            "if [[ -o interactive ]]; then\n  _nova_spawn_worker || true\nfi\n\nadd-zsh-hook"
+        ));
+    }
+
+    #[test]
     fn sends_virtual_env_in_render_requests() {
         let script = render_init_script(Path::new("/tmp/nova"));
 
@@ -98,5 +110,15 @@ mod tests {
         let script = render_init_script(Path::new("/tmp/nova"));
 
         assert!(script.contains("${AWS_SESSION_TOKEN:+1}${_nova_nul}${PATH:-}${_nova_rs}"));
+    }
+
+    #[test]
+    fn checks_request_write_byte_count() {
+        let script = render_init_script(Path::new("/tmp/nova"));
+
+        assert!(script.contains("local -i wrote=0 frame_len=0"));
+        assert!(script.contains("setopt localoptions no_multibyte; frame_len=${#1}"));
+        assert!(script.contains("syswrite -c wrote -o \"$_nova_req_fd\" -- \"$frame\""));
+        assert!(script.contains("(( wrote != frame_len ))"));
     }
 }

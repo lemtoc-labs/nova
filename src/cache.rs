@@ -30,6 +30,7 @@ enum CachedValue {
 struct CacheEntry {
     value: CachedValue,
     collected_at: Instant,
+    last_used: Instant,
 }
 
 #[derive(Debug)]
@@ -62,10 +63,11 @@ impl SegmentCache {
         }
     }
 
-    pub fn lookup(&self, key: &CacheKey, now: Instant, ttl: Duration) -> AsyncValue {
-        let Some(entry) = self.entries.get(key) else {
+    pub fn lookup(&mut self, key: &CacheKey, now: Instant, ttl: Duration) -> AsyncValue {
+        let Some(entry) = self.entries.get_mut(key) else {
             return AsyncValue::Loading;
         };
+        entry.last_used = now;
 
         match &entry.value {
             CachedValue::Success(value) if is_fresh(entry.collected_at, now, ttl) => {
@@ -107,6 +109,7 @@ impl SegmentCache {
             CacheEntry {
                 value: CachedValue::Success(value),
                 collected_at,
+                last_used: collected_at,
             },
         );
     }
@@ -126,6 +129,7 @@ impl SegmentCache {
             CacheEntry {
                 value: CachedValue::Failure,
                 collected_at,
+                last_used: collected_at,
             },
         );
     }
@@ -154,7 +158,7 @@ impl SegmentCache {
         let Some(oldest_key) = self
             .entries
             .iter()
-            .min_by_key(|(_key, entry)| entry.collected_at)
+            .min_by_key(|(_key, entry)| entry.last_used)
             .map(|(key, _entry)| key.clone())
         else {
             return;
@@ -183,7 +187,7 @@ mod tests {
 
     #[test]
     fn lookup_returns_loading_for_missing_entry() {
-        let cache = SegmentCache::new(2);
+        let mut cache = SegmentCache::new(2);
         let now = Instant::now();
 
         assert_eq!(
@@ -304,7 +308,7 @@ mod tests {
     }
 
     #[test]
-    fn evicts_oldest_entry_when_capacity_is_reached() {
+    fn evicts_least_recently_used_entry_when_capacity_is_reached() {
         let mut cache = SegmentCache::new(2);
         let now = Instant::now();
         let first = key("/one");
@@ -331,6 +335,52 @@ mod tests {
             AsyncValue::Loading
         );
         assert_eq!(cache.len(), 2);
+    }
+
+    #[test]
+    fn lookup_touches_entries_for_lru_eviction() {
+        let mut cache = SegmentCache::new(2);
+        let now = Instant::now();
+        let first = key("/one");
+        let second = key("/two");
+        let third = key("/three");
+        cache.complete_success(first.clone(), Some(segment("1")), now);
+        cache.complete_success(
+            second.clone(),
+            Some(segment("2")),
+            now + Duration::from_secs(1),
+        );
+
+        assert_eq!(
+            cache.lookup(
+                &first,
+                now + Duration::from_secs(2),
+                Duration::from_secs(10)
+            ),
+            AsyncValue::Ready(Some(segment("1")))
+        );
+        cache.complete_success(
+            third.clone(),
+            Some(segment("3")),
+            now + Duration::from_secs(3),
+        );
+
+        assert_eq!(
+            cache.lookup(
+                &second,
+                now + Duration::from_secs(3),
+                Duration::from_secs(10)
+            ),
+            AsyncValue::Loading
+        );
+        assert_eq!(
+            cache.lookup(
+                &first,
+                now + Duration::from_secs(3),
+                Duration::from_secs(10)
+            ),
+            AsyncValue::Ready(Some(segment("1")))
+        );
     }
 
     #[test]

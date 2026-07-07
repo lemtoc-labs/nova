@@ -214,6 +214,39 @@ Decision:
 - `20` and `40` ms increase first prompt lag, with `40` ms reaching a 67.072 ms
   median under the slow-git condition.
 
+### 2026-07-08: PR-5 Eager Worker Spawn Check
+
+Environment:
+
+- Git revision: Task 7-5 commit (`perf(worker): eager spawn zsh worker`)
+- Machine: Apple Silicon `arm64` (local M4 Pro workstation)
+- Shell benchmark: `zsh-bench` via `scripts/bench-zsh`
+- Binary: `target/release/nova`, built with `nix develop -c cargo build --release`
+
+Commands:
+
+```sh
+scripts/bench-zsh
+```
+
+| checkpoint | metric | n | min | median | p95 | max |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| PR-5 eager spawn | `first_prompt_lag_ms` | 16 | 25.166 | 28.545 | 37.943 | 37.943 |
+| PR-5 eager spawn | `first_command_lag_ms` | 16 | 25.307 | 28.676 | 38.125 | 38.125 |
+| PR-5 eager spawn | `command_lag_ms` | 16 | 0.381 | 0.463 | 0.495 | 0.495 |
+| PR-5 eager spawn | `input_lag_ms` | 16 | 0.130 | 0.555 | 0.759 | 0.759 |
+
+Interpretation:
+
+- All primary metrics remain green after spawning the worker during interactive
+  init.
+- Compared with the PR-4 normal `initial_wait_ms = 0` run, this minimal
+  `.zshrc` benchmark is stable rather than a clear first-prompt improvement
+  (`first_prompt_lag_ms` median 27.259 ms before, 28.545 ms after).
+- The change removes worker process creation from the first `precmd`, but
+  `zsh-bench` also includes the `nova init zsh` path in startup-adjacent
+  latency, so the benefit is not visible in this minimal shell benchmark.
+
 ## GitHub Actions Benchmarks
 
 Nova runs two zsh-bench workflows with different purposes:

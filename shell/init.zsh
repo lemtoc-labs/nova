@@ -39,11 +39,18 @@ _nova_setup_runtime() {
 
 _nova_spawn_worker() {
   emulate -L zsh
+  _nova_worker_alive && return 0
   unsetopt bg_nice 2>/dev/null || true
   [[ -p "$_nova_req_fifo" && -p "$_nova_resp_fifo" ]] || _nova_setup_runtime || return 1
   "$_nova_bin" worker --dir "$_nova_runtime_dir" --session-token "$_nova_session_token" \
     </dev/null >/dev/null 2>/dev/null &!
   _nova_worker_pid=$!
+}
+
+_nova_worker_alive() {
+  emulate -L zsh
+  [[ -n ${_nova_worker_pid:-} ]] || return 1
+  kill -0 "$_nova_worker_pid" 2>/dev/null
 }
 
 _nova_close_fds() {
@@ -113,10 +120,12 @@ _nova_ensure_worker() {
     return 0
   fi
 
-  _nova_spawn_worker || {
-    _nova_mark_dead
-    return 1
-  }
+  if ! _nova_worker_alive; then
+    _nova_spawn_worker || {
+      _nova_mark_dead
+      return 1
+    }
+  fi
 
   _nova_open_transport || {
     _nova_mark_dead
@@ -137,7 +146,12 @@ _nova_send_request() {
   local prompt_host=${HOST:-${HOSTNAME:-}}
 
   local frame="R${_nova_nul}${_nova_gen}${_nova_nul}${PWD}${_nova_nul}${exit_status}${_nova_nul}${duration_ms}${_nova_nul}${columns}${_nova_nul}${KEYMAP:-main}${_nova_nul}${USER:-}${_nova_nul}${prompt_host}${_nova_nul}${prompt_time}${_nova_nul}${VIRTUAL_ENV:-}${_nova_nul}${IN_NIX_SHELL:-}${_nova_nul}${name:-}${_nova_nul}${NIX_SHELL_LEVEL:-}${_nova_nul}${HOME:-}${_nova_nul}${AWSU_PROFILE:-}${_nova_nul}${AWS_VAULT:-}${_nova_nul}${AWSUME_PROFILE:-}${_nova_nul}${AWS_PROFILE:-}${_nova_nul}${AWS_SSO_PROFILE:-}${_nova_nul}${AWS_REGION:-}${_nova_nul}${AWS_DEFAULT_REGION:-}${_nova_nul}${AWS_CONFIG_FILE:-}${_nova_nul}${AWS_SHARED_CREDENTIALS_FILE:-}${_nova_nul}${AWS_CREDENTIALS_FILE:-}${_nova_nul}${AWS_ACCESS_KEY_ID:+1}${_nova_nul}${AWS_SECRET_ACCESS_KEY:+1}${_nova_nul}${AWS_SESSION_TOKEN:+1}${_nova_nul}${PATH:-}${_nova_rs}"
-  syswrite -o "$_nova_req_fd" -- "$frame" >/dev/null 2>&1
+  local -i wrote=0 frame_len=0
+  () { setopt localoptions no_multibyte; frame_len=${#1} } "$frame"
+  if ! syswrite -c wrote -o "$_nova_req_fd" -- "$frame" 2>/dev/null \
+      || (( wrote != frame_len )); then
+    return 1
+  fi
 }
 
 _nova_drain() {
@@ -291,8 +305,15 @@ _nova_precmd() {
 _nova_cleanup() {
   emulate -L zsh
   _nova_close_fds
+  if [[ -n ${_nova_worker_pid:-} ]]; then
+    kill "$_nova_worker_pid" 2>/dev/null || true
+  fi
   command rm -rf -- "$_nova_runtime_dir" 2>/dev/null || true
 }
+
+if [[ -o interactive ]]; then
+  _nova_spawn_worker || true
+fi
 
 add-zsh-hook preexec _nova_preexec
 add-zsh-hook precmd _nova_precmd
