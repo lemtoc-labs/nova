@@ -518,12 +518,17 @@ pub fn render_nix_shell(env: &PromptEnv, config: &SegmentConfig) -> Option<Segme
 }
 
 pub fn render_aws(env: &PromptEnv, config: &SegmentConfig) -> Option<SegmentContent> {
-    let context = resolve_aws_context(env)?;
-    Some(SegmentContent::new(
-        AWS_SEGMENT_ID,
-        label_with_icon(&context.label(), config, AWS_ICON),
-        aws_style(config),
-    ))
+    let force_display = config.force_display.unwrap_or(true);
+    let context = resolve_aws_context(env, force_display)?;
+    let text = match config.format.as_deref() {
+        Some(format) => render_aws_format(format, &context, config),
+        None => label_with_icon(&context.label(), config, AWS_ICON),
+    };
+    if text.is_empty() {
+        return None;
+    }
+
+    Some(SegmentContent::new(AWS_SEGMENT_ID, text, aws_style(config)))
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -543,6 +548,134 @@ impl AwsContext {
     }
 }
 
+struct AwsFormatVariables<'a> {
+    symbol: String,
+    profile: Option<&'a str>,
+    region: Option<&'a str>,
+}
+
+fn render_aws_format(format: &str, context: &AwsContext, config: &SegmentConfig) -> String {
+    let variables = AwsFormatVariables {
+        symbol: aws_symbol(config),
+        profile: context.profile.as_deref(),
+        region: context.region.as_deref(),
+    };
+    render_aws_format_template(format, &variables)
+}
+
+fn render_aws_format_template(format: &str, variables: &AwsFormatVariables<'_>) -> String {
+    let chars = format.chars().collect::<Vec<_>>();
+    let mut output = String::new();
+    let mut plain = String::new();
+    let mut index = 0;
+
+    while index < chars.len() {
+        if chars[index] == '[' {
+            if let Some(end) = closing_optional_group(&chars, index + 1) {
+                output.push_str(&render_aws_format_part(&plain, variables).text);
+                plain.clear();
+                let inner = chars[index + 1..end].iter().collect::<String>();
+                let rendered = render_aws_format_part(&inner, variables);
+                if rendered.has_value {
+                    output.push_str(&rendered.text);
+                }
+                index = end + 1;
+                continue;
+            }
+        }
+
+        plain.push(chars[index]);
+        index += 1;
+    }
+
+    output.push_str(&render_aws_format_part(&plain, variables).text);
+    output
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct RenderedAwsFormatPart {
+    text: String,
+    has_value: bool,
+}
+
+fn render_aws_format_part(
+    input: &str,
+    variables: &AwsFormatVariables<'_>,
+) -> RenderedAwsFormatPart {
+    let chars = input.chars().collect::<Vec<_>>();
+    let mut output = String::new();
+    let mut has_value = false;
+    let mut index = 0;
+
+    while index < chars.len() {
+        if chars[index] != '$' {
+            output.push(chars[index]);
+            index += 1;
+            continue;
+        }
+
+        let start = index + 1;
+        let mut end = start;
+        while end < chars.len() && is_format_variable_char(chars[end]) {
+            end += 1;
+        }
+
+        if start == end {
+            output.push('$');
+            index += 1;
+            continue;
+        }
+
+        let name = chars[start..end].iter().collect::<String>();
+        match aws_format_value(&name, variables) {
+            Some(value) => {
+                has_value |= !value.is_empty();
+                output.push_str(&value);
+            }
+            None => {
+                output.push('$');
+                output.push_str(&name);
+            }
+        }
+        index = end;
+    }
+
+    RenderedAwsFormatPart {
+        text: output,
+        has_value,
+    }
+}
+
+fn closing_optional_group(chars: &[char], start: usize) -> Option<usize> {
+    chars
+        .iter()
+        .enumerate()
+        .skip(start)
+        .find_map(|(index, character)| (*character == ']').then_some(index))
+}
+
+fn is_format_variable_char(character: char) -> bool {
+    character.is_ascii_alphanumeric() || character == '_'
+}
+
+fn aws_format_value(name: &str, variables: &AwsFormatVariables<'_>) -> Option<String> {
+    match name {
+        "symbol" => Some(variables.symbol.clone()),
+        "profile" => Some(variables.profile.unwrap_or_default().to_string()),
+        "region" => Some(variables.region.unwrap_or_default().to_string()),
+        "duration" => Some(String::new()),
+        _ => None,
+    }
+}
+
+fn aws_symbol(config: &SegmentConfig) -> String {
+    match config.icon.as_deref() {
+        Some("") => String::new(),
+        Some(icon) => format!("{icon} "),
+        None => format!("{AWS_ICON} "),
+    }
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 struct IniFile {
     sections: BTreeMap<String, BTreeMap<String, String>>,
@@ -554,7 +687,7 @@ impl IniFile {
     }
 }
 
-fn resolve_aws_context(env: &PromptEnv) -> Option<AwsContext> {
+fn resolve_aws_context(env: &PromptEnv, force_display: bool) -> Option<AwsContext> {
     let config_file = aws_config_file_path(env).and_then(read_ini_file);
     let credentials_file = aws_credentials_file_path(env).and_then(read_ini_file);
     let profile = aws_profile(env);
@@ -564,15 +697,18 @@ fn resolve_aws_context(env: &PromptEnv) -> Option<AwsContext> {
         return None;
     }
 
-    if !has_credential_process_or_sso(
-        config_file.as_ref(),
-        credentials_file.as_ref(),
-        profile.as_ref(),
-    ) && !has_source_profile(
-        config_file.as_ref(),
-        credentials_file.as_ref(),
-        profile.as_ref(),
-    ) && !has_defined_credentials(env, credentials_file.as_ref(), profile.as_ref())
+    if !force_display
+        && !has_credential_process_or_sso(
+            config_file.as_ref(),
+            credentials_file.as_ref(),
+            profile.as_ref(),
+        )
+        && !has_source_profile(
+            config_file.as_ref(),
+            credentials_file.as_ref(),
+            profile.as_ref(),
+        )
+        && !has_defined_credentials(env, credentials_file.as_ref(), profile.as_ref())
     {
         return None;
     }
@@ -1397,7 +1533,96 @@ mod tests {
     }
 
     #[test]
-    fn omits_aws_without_credentials() {
+    fn renders_aws_without_credentials_by_default() {
+        let segment = render_aws(
+            &PromptEnv {
+                aws: AwsEnv {
+                    aws_profile: Some("astronauts".to_string()),
+                    aws_region: Some("ap-northeast-1".to_string()),
+                    ..AwsEnv::default()
+                },
+                ..PromptEnv::default()
+            },
+            &SegmentConfig::default(),
+        )
+        .expect("aws segment should render");
+
+        assert_eq!(segment.text, " astronauts (ap-northeast-1)");
+    }
+
+    #[test]
+    fn renders_aws_with_configured_format_hiding_region() {
+        let config = SegmentConfig {
+            format: Some("$symbol$profile".to_string()),
+            ..SegmentConfig::default()
+        };
+        let segment = render_aws(
+            &PromptEnv {
+                aws: AwsEnv {
+                    aws_profile: Some("astronauts".to_string()),
+                    aws_region: Some("ap-northeast-1".to_string()),
+                    ..AwsEnv::default()
+                },
+                ..PromptEnv::default()
+            },
+            &config,
+        )
+        .expect("aws segment should render");
+
+        assert_eq!(segment.text, " astronauts");
+    }
+
+    #[test]
+    fn renders_aws_optional_format_groups_only_when_variables_are_present() {
+        let config = SegmentConfig {
+            format: Some("$symbol$profile[ ($region)]".to_string()),
+            ..SegmentConfig::default()
+        };
+        let segment = render_aws(
+            &PromptEnv {
+                aws: AwsEnv {
+                    aws_profile: Some("astronauts".to_string()),
+                    ..AwsEnv::default()
+                },
+                ..PromptEnv::default()
+            },
+            &config,
+        )
+        .expect("aws segment should render");
+
+        assert_eq!(segment.text, " astronauts");
+    }
+
+    #[test]
+    fn omits_aws_when_configured_format_renders_empty() {
+        let config = SegmentConfig {
+            icon: Some(String::new()),
+            format: Some("$symbol".to_string()),
+            ..SegmentConfig::default()
+        };
+
+        assert_eq!(
+            render_aws(
+                &PromptEnv {
+                    aws: AwsEnv {
+                        aws_profile: Some("astronauts".to_string()),
+                        ..AwsEnv::default()
+                    },
+                    ..PromptEnv::default()
+                },
+                &config,
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn omits_aws_without_credentials_when_force_display_is_false() {
+        let config = SegmentConfig {
+            force_display: Some(false),
+            ..SegmentConfig::default()
+        };
+
         assert_eq!(
             render_aws(
                 &PromptEnv {
@@ -1408,7 +1633,7 @@ mod tests {
                     },
                     ..PromptEnv::default()
                 },
-                &SegmentConfig::default()
+                &config,
             ),
             None
         );

@@ -139,6 +139,13 @@ style = { fg = "blue", bold = true }
 
 [segments.aws]
 icon = ""
+# Default true: render AWS when profile or region is available, even if Nova
+# cannot prove that credentials exist. Set false for Starship-compatible strict
+# credential gating.
+force_display = true
+# Format variables: $symbol, $profile, $region. Optional groups in brackets
+# render only when at least one known variable inside has a value.
+format = "$symbol$profile[ ($region)]"
 style = { fg = "yellow", bold = true }
 
 [segments.duration]

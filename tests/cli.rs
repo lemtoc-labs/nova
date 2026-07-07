@@ -40,7 +40,9 @@ fn renders_zsh_init_script() {
 
 #[test]
 fn renders_prompt_command() {
+    let config_home = tempfile::tempdir().expect("config home should be created");
     let mut command = Command::cargo_bin("nova").expect("nova binary should build");
+    isolate_prompt_env(&mut command, &config_home);
 
     command
         .arg("prompt")
@@ -72,7 +74,9 @@ fn rejects_zero_columns() {
 
 #[test]
 fn prints_shell_assignments_for_prompt_command() {
+    let config_home = tempfile::tempdir().expect("config home should be created");
     let mut command = Command::cargo_bin("nova").expect("nova binary should build");
+    isolate_prompt_env(&mut command, &config_home);
 
     command
         .arg("prompt")
@@ -88,7 +92,9 @@ fn prints_shell_assignments_for_prompt_command() {
 
 #[test]
 fn previews_prompt_without_zsh_nonprinting_markers() {
+    let config_home = tempfile::tempdir().expect("config home should be created");
     let mut command = Command::cargo_bin("nova").expect("nova binary should build");
+    isolate_prompt_env(&mut command, &config_home);
 
     command
         .arg("prompt")
@@ -221,4 +227,32 @@ fn warns_about_unknown_segments_while_validating_config_files() {
         .stderr(predicate::str::contains(
             "nova: warning: unknown segment `missing` in `layout.line1.left`",
         ));
+}
+
+fn isolate_prompt_env(command: &mut Command, config_home: &tempfile::TempDir) {
+    command
+        .env_remove("NOVA_CONFIG")
+        .env("XDG_CONFIG_HOME", config_home.path());
+
+    for name in [
+        "AWSU_PROFILE",
+        "AWS_VAULT",
+        "AWSUME_PROFILE",
+        "AWS_PROFILE",
+        "AWS_SSO_PROFILE",
+        "AWS_REGION",
+        "AWS_DEFAULT_REGION",
+        "AWS_CONFIG_FILE",
+        "AWS_SHARED_CREDENTIALS_FILE",
+        "AWS_CREDENTIALS_FILE",
+        "AWS_ACCESS_KEY_ID",
+        "AWS_SECRET_ACCESS_KEY",
+        "AWS_SESSION_TOKEN",
+        "IN_NIX_SHELL",
+        "name",
+        "NIX_SHELL_LEVEL",
+        "VIRTUAL_ENV",
+    ] {
+        command.env_remove(name);
+    }
 }

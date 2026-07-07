@@ -32,6 +32,8 @@ fn worker_renders_prompt_over_fifos() {
     let _guard = worker_test_lock();
     let tempdir = tempfile::tempdir().expect("tempdir should be created");
     let runtime_dir = tempdir.path();
+    let config_home = runtime_dir.join("config-home");
+    fs::create_dir(&config_home).expect("config home should be created");
     create_fifo(runtime_dir.join("req"));
     create_fifo(runtime_dir.join("resp"));
 
@@ -41,6 +43,8 @@ fn worker_renders_prompt_over_fifos() {
         .arg(runtime_dir)
         .arg("--session-token")
         .arg("test-token")
+        .env_remove("NOVA_CONFIG")
+        .env("XDG_CONFIG_HOME", &config_home)
         .spawn()
         .expect("worker should spawn");
 
