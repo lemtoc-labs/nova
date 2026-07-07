@@ -117,6 +117,7 @@ Preview the dashboard locally before changing the published template:
 scripts/preview-zsh-bench-dashboard
 ```
 
-The preview script copies the repository dashboard template and the latest
-`origin/gh-pages:bench/zsh/data.js` into a temporary directory, then prints the
-local `file://` URL to open in a browser.
+The preview script writes the repository dashboard template and the latest
+`origin/gh-pages:bench/zsh/data.js` into `.preview/zsh-bench-dashboard`, then
+prints the local `file://` URL to open in a browser. The `.preview` directory is
+ignored by git.
