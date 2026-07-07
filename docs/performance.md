@@ -90,3 +90,19 @@ highlighting, and autosuggestions.
 `nova init zsh` overhead, so yellow is acceptable initially. If either startup
 field remains near the yellow limit after M6 tuning, revisit initialization
 costs separately from the steady-state prompt path.
+
+## GitHub Actions Benchmarks
+
+Nova runs two zsh-bench workflows with different purposes:
+
+- `Zsh Benchmark (PR)` runs on `macos-latest` for pull requests. Use it as a
+  regression smoke test and trend signal. GitHub-hosted runner values are not
+  fixed-machine measurements.
+- `Zsh Benchmark (Self-hosted)` runs on `workflow_dispatch` and pushes to
+  `main` with `runs-on: [self-hosted, nova-bench]`. Use it as the fixed-machine
+  reference for M4Pro measurements.
+
+The self-hosted workflow is intentionally not a pull request trigger while the
+runner is manually started. This avoids leaving ordinary PRs pending when the
+local runner is offline. Start the Nova runner with `./run.sh` when a fixed
+benchmark is needed, then trigger the workflow from GitHub Actions.
