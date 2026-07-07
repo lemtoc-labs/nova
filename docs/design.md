@@ -555,6 +555,10 @@ timeout_ms = 1000
 min_ms = 2000                   # hide below this
 ```
 
+`initial_wait_ms` defaults to `0`. Local A/B measurements after PR-3 showed
+stable sub-millisecond input lag at `0`, while larger waits increased first
+prompt lag without improving command or input lag.
+
 Rules:
 
 - Parsing/validation lives in `config`, reported with file/key context.
