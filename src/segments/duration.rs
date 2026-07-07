@@ -29,11 +29,15 @@ impl SyncSegment for DurationSegment {
 
 pub fn format_duration(duration_ms: u64) -> String {
     if duration_ms < 1_000 {
-        return format!("{duration_ms}ms");
+        return format!("+{duration_ms}ms");
     }
 
     let tenths = (duration_ms + 50) / 100;
-    format!("{}.{:01}s", tenths / 10, tenths % 10)
+    if tenths.is_multiple_of(10) {
+        format!("+{}s", tenths / 10)
+    } else {
+        format!("+{}.{:01}s", tenths / 10, tenths % 10)
+    }
 }
 
 #[cfg(test)]
@@ -42,8 +46,9 @@ mod tests {
 
     #[test]
     fn formats_milliseconds_and_seconds() {
-        assert_eq!(format_duration(999), "999ms");
-        assert_eq!(format_duration(1_050), "1.1s");
-        assert_eq!(format_duration(12_345), "12.3s");
+        assert_eq!(format_duration(999), "+999ms");
+        assert_eq!(format_duration(1_050), "+1.1s");
+        assert_eq!(format_duration(2_000), "+2s");
+        assert_eq!(format_duration(12_345), "+12.3s");
     }
 }

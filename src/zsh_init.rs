@@ -45,7 +45,9 @@ mod tests {
     fn sends_virtual_env_in_render_requests() {
         let script = render_init_script(Path::new("/tmp/nova"));
 
-        assert!(script.contains("${KEYMAP:-main}${_nova_nul}${VIRTUAL_ENV:-}"));
+        assert!(script.contains(
+            "${KEYMAP:-main}${_nova_nul}${USER:-}${_nova_nul}${prompt_host}${_nova_nul}${prompt_time}${_nova_nul}${VIRTUAL_ENV:-}"
+        ));
     }
 
     #[test]

@@ -87,6 +87,23 @@ fn prints_shell_assignments_for_prompt_command() {
 }
 
 #[test]
+fn previews_prompt_without_zsh_nonprinting_markers() {
+    let mut command = Command::cargo_bin("nova").expect("nova binary should build");
+
+    command
+        .arg("prompt")
+        .arg("--cwd")
+        .arg("/tmp/nova")
+        .arg("--format")
+        .arg("preview")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("%{").not())
+        .stdout(predicate::str::contains("%}").not())
+        .stdout(predicate::str::contains("\u{1b}[32m/tmp/nova"));
+}
+
+#[test]
 fn renders_configured_ssh_segment() {
     let tempdir = tempfile::tempdir().expect("tempdir should be created");
     let config_path = tempdir.path().join("nova.toml");
@@ -118,8 +135,44 @@ fn renders_configured_ssh_segment() {
         .env("HOSTNAME", "devbox")
         .assert()
         .success()
-        .stdout(predicate::str::contains("me@devbox"))
+        .stdout(predicate::str::contains("me"))
+        .stdout(predicate::str::contains("@devbox"))
         .stdout(predicate::str::contains("❮"));
+}
+
+#[test]
+fn renders_configured_user_host_segment_without_ssh() {
+    let tempdir = tempfile::tempdir().expect("tempdir should be created");
+    let config_path = tempdir.path().join("nova.toml");
+    fs::write(
+        &config_path,
+        r#"
+        [layout]
+        lines = 1
+
+        [layout.line1]
+        left = ["user_host", "prompt_char"]
+        right = []
+        "#,
+    )
+    .expect("config should be written");
+
+    let mut command = Command::cargo_bin("nova").expect("nova binary should build");
+
+    command
+        .arg("prompt")
+        .arg("--config")
+        .arg(config_path)
+        .arg("--cwd")
+        .arg("/tmp/nova")
+        .env("USER", "me")
+        .env("HOST", "M4Pro")
+        .env_remove("SSH_CONNECTION")
+        .env_remove("SSH_CLIENT")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("me"))
+        .stdout(predicate::str::contains("@M4Pro"));
 }
 
 #[test]

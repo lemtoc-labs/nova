@@ -1,11 +1,29 @@
 //! zsh prompt lowering and escaping.
 
-use crate::segments::{SegmentContent, Style};
+use crate::segments::{SegmentContent, SegmentPart, Style};
 
 pub fn lower_segment(segment: &SegmentContent) -> String {
+    if segment.uses_parts() {
+        return segment
+            .parts
+            .iter()
+            .map(lower_part)
+            .collect::<Vec<_>>()
+            .join("");
+    }
+
     let text = escape_prompt_text(&segment.text);
-    let Some(start) = start_sgr(&segment.style) else {
-        return text;
+    lower_text(&text, &segment.style)
+}
+
+fn lower_part(part: &SegmentPart) -> String {
+    let text = escape_prompt_text(&part.text);
+    lower_text(&text, &part.style)
+}
+
+fn lower_text(text: &str, style: &Style) -> String {
+    let Some(start) = start_sgr(style) else {
+        return text.to_string();
     };
 
     format!(
@@ -93,6 +111,29 @@ mod tests {
         assert_eq!(
             lower_segment(&segment),
             "%{\u{1b}[1;31m%}100%%%{\u{1b}[0m%}"
+        );
+    }
+
+    #[test]
+    fn lowers_styled_parts_without_inserting_spaces() {
+        let segment = SegmentContent::from_parts(
+            "user_host",
+            vec![
+                SegmentPart::new(
+                    "nova",
+                    Style {
+                        fg: Some("green".to_string()),
+                        bg: None,
+                        bold: false,
+                    },
+                ),
+                SegmentPart::new("@M4Pro", Style::default()),
+            ],
+        );
+
+        assert_eq!(
+            lower_segment(&segment),
+            "%{\u{1b}[32m%}nova%{\u{1b}[0m%}@M4Pro"
         );
     }
 }

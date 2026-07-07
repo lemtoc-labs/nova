@@ -96,6 +96,7 @@ struct PromptArgs {
     columns: u16,
     exit_status: i32,
     duration_ms: Option<u64>,
+    time: Option<String>,
     keymap: Keymap,
     config_path: Option<PathBuf>,
     format: PromptFormat,
@@ -112,6 +113,7 @@ impl PromptArgs {
                 .unwrap_or(80),
             exit_status: 0,
             duration_ms: None,
+            time: None,
             keymap: Keymap::Main,
             config_path: None,
             format: PromptFormat::Plain,
@@ -140,6 +142,10 @@ impl PromptArgs {
                     )?);
                     index += 2;
                 }
+                "--time" => {
+                    parsed.time = Some(required_value(args, index, "--time")?.to_string());
+                    index += 2;
+                }
                 "--keymap" => {
                     parsed.keymap = Keymap::parse(required_value(args, index, "--keymap")?);
                     index += 2;
@@ -154,7 +160,7 @@ impl PromptArgs {
                     index += 2;
                 }
                 "--help" | "-h" => {
-                    return Err("usage: nova prompt [--cwd PATH] [--cols N] [--exit N] [--duration-ms N] [--keymap KEYMAP] [--config PATH] [--format plain|shell]".to_string());
+                    return Err("usage: nova prompt [--cwd PATH] [--cols N] [--exit N] [--duration-ms N] [--time HH:MM:SS] [--keymap KEYMAP] [--config PATH] [--format plain|preview|shell]".to_string());
                 }
                 option => return Err(format!("unknown prompt option `{option}`")),
             }
@@ -171,6 +177,7 @@ impl PromptArgs {
                 cwd: self.cwd,
                 exit_status: self.exit_status,
                 duration_ms: self.duration_ms,
+                time: self.time,
                 columns: self.columns,
                 keymap: self.keymap,
                 env: nova::state::PromptEnv::from_current_process(),
@@ -183,6 +190,17 @@ impl PromptArgs {
                     format!("{}\n", output.prompt)
                 } else {
                     format!("{}\n{}\n", output.prompt, output.rprompt)
+                }
+            }
+            PromptFormat::Preview => {
+                if output.rprompt.is_empty() {
+                    format!("{}\n", preview_prompt(&output.prompt))
+                } else {
+                    format!(
+                        "{}\n{}\n",
+                        preview_prompt(&output.prompt),
+                        preview_prompt(&output.rprompt)
+                    )
                 }
             }
             PromptFormat::Shell => format!(
@@ -280,6 +298,7 @@ impl CheckArgs {
 #[derive(Clone, Copy, Debug)]
 enum PromptFormat {
     Plain,
+    Preview,
     Shell,
 }
 
@@ -287,6 +306,7 @@ impl PromptFormat {
     fn parse(input: &str) -> Result<Self, String> {
         match input {
             "plain" => Ok(Self::Plain),
+            "preview" => Ok(Self::Preview),
             "shell" => Ok(Self::Shell),
             _ => Err(format!("unknown prompt format `{input}`")),
         }
@@ -320,4 +340,8 @@ fn parse_columns(value: &str) -> Result<u16, String> {
 
 fn zsh_quote(input: &str) -> String {
     format!("'{}'", input.replace('\'', "'\\''"))
+}
+
+fn preview_prompt(input: &str) -> String {
+    input.replace("%{", "").replace("%}", "").replace("%%", "%")
 }

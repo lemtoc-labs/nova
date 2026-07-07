@@ -1,6 +1,5 @@
 //! Current working directory segment.
 
-use std::env;
 use std::path::{Component, Path, PathBuf};
 
 use super::{SegmentContent, Style, SyncSegment};
@@ -15,14 +14,11 @@ impl SyncSegment for DirSegment {
     }
 
     fn render(&self, state: &PromptState, config: &SegmentConfig) -> Option<SegmentContent> {
-        let home = env::var_os("HOME").map(PathBuf::from);
+        let fallback_home = std::env::var_os("HOME").map(PathBuf::from);
+        let home = state.env.home.as_deref().or(fallback_home.as_deref());
         let max_components = config.max_components.unwrap_or(4);
-        let text = display_path(&state.cwd, home.as_deref(), max_components);
-        Some(SegmentContent::new(
-            self.id(),
-            text,
-            Style::from(&config.style),
-        ))
+        let text = display_path(&state.cwd, home, max_components);
+        Some(SegmentContent::new(self.id(), text, dir_style(config)))
     }
 }
 
@@ -42,7 +38,7 @@ fn format_with_prefix(prefix: &str, path: &Path, max_components: usize) -> Strin
         return prefix.to_string();
     }
 
-    let shortened = shorten_components(&components, max_components);
+    let shortened = shorten_components(&components, max_components, prefix == "~");
     match prefix {
         "" => shortened.join("/"),
         "/" => format!("/{}", shortened.join("/")),
@@ -66,15 +62,65 @@ fn visible_components(path: &Path) -> Vec<String> {
         .collect()
 }
 
-fn shorten_components(components: &[String], max_components: usize) -> Vec<String> {
-    if max_components == 0 || components.len() <= max_components {
+fn shorten_components(
+    components: &[String],
+    max_components: usize,
+    abbreviate: bool,
+) -> Vec<String> {
+    if max_components == 0 {
         return components.to_vec();
     }
 
-    let skipped_count = components.len() - max_components;
-    std::iter::once("…".to_string())
-        .chain(components.iter().skip(skipped_count).cloned())
-        .collect()
+    let skipped_count = components.len().saturating_sub(max_components);
+    if skipped_count == 0 && !abbreviate {
+        return components.to_vec();
+    }
+
+    let mut shortened = Vec::new();
+
+    if skipped_count > 0 {
+        shortened.push("…".to_string());
+    }
+
+    shortened.extend(components.iter().skip(skipped_count).enumerate().map(
+        |(index, component)| {
+            if index + skipped_count == components.len() - 1 || !abbreviate {
+                component.clone()
+            } else {
+                abbreviate_component(component)
+            }
+        },
+    ));
+
+    shortened
+}
+
+fn abbreviate_component(component: &str) -> String {
+    if component == "." || component == ".." {
+        return component.to_string();
+    }
+
+    let mut chars = component.chars();
+    match chars.next() {
+        Some('.') => chars
+            .next()
+            .map(|next| format!(".{next}"))
+            .unwrap_or_else(|| ".".to_string()),
+        Some(first) => first.to_string(),
+        None => String::new(),
+    }
+}
+
+fn dir_style(config: &SegmentConfig) -> Style {
+    if config.style.fg.is_some() || config.style.bg.is_some() || config.style.bold {
+        return Style::from(&config.style);
+    }
+
+    Style {
+        fg: Some("green".to_string()),
+        bg: None,
+        bold: false,
+    }
 }
 
 #[cfg(test)]
@@ -85,11 +131,35 @@ mod tests {
     fn shortens_home_paths() {
         assert_eq!(
             display_path(
+                Path::new("/Users/me/dev/oss/nova"),
+                Some(Path::new("/Users/me")),
+                4
+            ),
+            "~/d/o/nova"
+        );
+    }
+
+    #[test]
+    fn caps_long_paths_with_ellipsis() {
+        assert_eq!(
+            display_path(
                 Path::new("/Users/me/projects/nova/src/render"),
                 Some(Path::new("/Users/me")),
                 2
             ),
-            "~/…/src/render"
+            "~/…/s/render"
+        );
+    }
+
+    #[test]
+    fn preserves_full_paths_when_component_cap_is_zero() {
+        assert_eq!(
+            display_path(
+                Path::new("/Users/me/projects/nova"),
+                Some(Path::new("/Users/me")),
+                0
+            ),
+            "~/projects/nova"
         );
     }
 

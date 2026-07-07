@@ -532,6 +532,39 @@ mod tests {
     }
 
     #[test]
+    fn branch_and_status_use_independent_config_styles() {
+        let branch_config = SegmentConfig {
+            style: crate::config::StyleConfig {
+                fg: Some("cyan".to_string()),
+                bg: None,
+                bold: false,
+            },
+            ..SegmentConfig::default()
+        };
+        let status_config = SegmentConfig {
+            style: crate::config::StyleConfig {
+                fg: Some("yellow".to_string()),
+                bg: None,
+                bold: true,
+            },
+            ..SegmentConfig::default()
+        };
+        let status = GitStatus {
+            branch: Some("main".to_string()),
+            staged: 1,
+            ..GitStatus::default()
+        };
+
+        let branch = render_git_branch(&status, &branch_config).expect("branch should render");
+        let git_status = render_git_status(&status, &status_config).expect("status should render");
+
+        assert_eq!(branch.style.fg.as_deref(), Some("cyan"));
+        assert!(!branch.style.bold);
+        assert_eq!(git_status.style.fg.as_deref(), Some("yellow"));
+        assert!(git_status.style.bold);
+    }
+
+    #[test]
     fn builds_cache_key_from_repository_root() -> Result<(), Box<dyn std::error::Error>> {
         let dir = tempfile::tempdir()?;
         init_repo(dir.path())?;
