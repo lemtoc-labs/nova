@@ -18,6 +18,7 @@ pub struct PromptState {
 pub struct PromptEnv {
     pub user: Option<String>,
     pub host: Option<String>,
+    pub path: Option<String>,
     pub virtual_env: Option<PathBuf>,
     pub in_nix_shell: Option<String>,
     pub nix_shell_name: Option<String>,
@@ -48,6 +49,7 @@ impl PromptEnv {
         Self {
             user: env_string("USER"),
             host: env_string("HOST").or_else(|| env_string("HOSTNAME")),
+            path: env_string("PATH"),
             virtual_env: env_path("VIRTUAL_ENV"),
             in_nix_shell: env_string("IN_NIX_SHELL"),
             nix_shell_name: env_string("name"),

@@ -1,7 +1,8 @@
 //! Runtime and tool information collectors.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, hash_map::DefaultHasher};
 use std::fs;
+use std::hash::{Hash, Hasher};
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -86,40 +87,40 @@ pub enum RuntimeCollectError {
     MissingStdout,
 }
 
-pub fn rust_cache_key(cwd: &Path, config_generation: u64) -> Option<CacheKey> {
+pub fn rust_cache_key(cwd: &Path, path: Option<&str>, config_generation: u64) -> Option<CacheKey> {
     let root = find_rust_project_root(cwd)?;
     Some(CacheKey::new(
         RUST_VERSION_SEGMENT_ID,
-        root.to_string_lossy(),
+        runtime_cache_source(root.to_string_lossy(), path),
         config_generation,
     ))
 }
 
-pub fn node_cache_key(cwd: &Path, config_generation: u64) -> Option<CacheKey> {
+pub fn node_cache_key(cwd: &Path, path: Option<&str>, config_generation: u64) -> Option<CacheKey> {
     is_node_project_dir(cwd).then(|| {
         CacheKey::new(
             NODE_VERSION_SEGMENT_ID,
-            cwd.to_string_lossy(),
+            runtime_cache_source(cwd.to_string_lossy(), path),
             config_generation,
         )
     })
 }
 
-pub fn bun_cache_key(cwd: &Path, config_generation: u64) -> Option<CacheKey> {
+pub fn bun_cache_key(cwd: &Path, path: Option<&str>, config_generation: u64) -> Option<CacheKey> {
     is_bun_project_dir(cwd).then(|| {
         CacheKey::new(
             BUN_VERSION_SEGMENT_ID,
-            cwd.to_string_lossy(),
+            runtime_cache_source(cwd.to_string_lossy(), path),
             config_generation,
         )
     })
 }
 
-pub fn deno_cache_key(cwd: &Path, config_generation: u64) -> Option<CacheKey> {
+pub fn deno_cache_key(cwd: &Path, path: Option<&str>, config_generation: u64) -> Option<CacheKey> {
     is_deno_project_dir(cwd).then(|| {
         CacheKey::new(
             DENO_VERSION_SEGMENT_ID,
-            cwd.to_string_lossy(),
+            runtime_cache_source(cwd.to_string_lossy(), path),
             config_generation,
         )
     })
@@ -128,12 +129,13 @@ pub fn deno_cache_key(cwd: &Path, config_generation: u64) -> Option<CacheKey> {
 pub fn python_cache_key(
     cwd: &Path,
     virtual_env: Option<&Path>,
+    path: Option<&str>,
     config_generation: u64,
 ) -> Option<CacheKey> {
     is_python_project_dir(cwd, virtual_env).then(|| {
         CacheKey::new(
             PYTHON_VERSION_SEGMENT_ID,
-            python_cache_source(cwd, virtual_env),
+            runtime_cache_source(python_cache_source(cwd, virtual_env), path),
             config_generation,
         )
     })
@@ -209,51 +211,67 @@ pub fn is_python_project_dir(cwd: &Path, virtual_env: Option<&Path>) -> bool {
 
 pub fn collect_rust_version(
     cwd: &Path,
+    path: Option<&str>,
     deadline: Instant,
 ) -> Result<Option<String>, RuntimeCollectError> {
-    collect_rust_version_with_command(cwd, deadline, Path::new("rustc"))
+    collect_rust_version_with_command_and_path(cwd, deadline, Path::new("rustc"), path)
 }
 
 pub fn collect_node_version(
     cwd: &Path,
+    path: Option<&str>,
     deadline: Instant,
 ) -> Result<Option<String>, RuntimeCollectError> {
-    collect_node_version_with_command(cwd, deadline, Path::new("node"))
+    collect_node_version_with_command_and_path(cwd, deadline, Path::new("node"), path)
 }
 
 pub fn collect_bun_version(
     cwd: &Path,
+    path: Option<&str>,
     deadline: Instant,
 ) -> Result<Option<String>, RuntimeCollectError> {
-    collect_bun_version_with_command(cwd, deadline, Path::new("bun"))
+    collect_bun_version_with_command_and_path(cwd, deadline, Path::new("bun"), path)
 }
 
 pub fn collect_deno_version(
     cwd: &Path,
+    path: Option<&str>,
     deadline: Instant,
 ) -> Result<Option<String>, RuntimeCollectError> {
-    collect_deno_version_with_command(cwd, deadline, Path::new("deno"))
+    collect_deno_version_with_command_and_path(cwd, deadline, Path::new("deno"), path)
 }
 
 pub fn collect_python_version(
     cwd: &Path,
     virtual_env: Option<&Path>,
+    path: Option<&str>,
     deadline: Instant,
 ) -> Result<Option<String>, RuntimeCollectError> {
     let commands = python_command_paths(virtual_env);
-    collect_python_version_with_commands(cwd, virtual_env, deadline, &commands)
+    collect_python_version_with_commands_and_path(cwd, virtual_env, deadline, &commands, path)
 }
 
+#[cfg(test)]
 fn collect_rust_version_with_command(
     cwd: &Path,
     deadline: Instant,
     command: &Path,
 ) -> Result<Option<String>, RuntimeCollectError> {
+    collect_rust_version_with_command_and_path(cwd, deadline, command, None)
+}
+
+fn collect_rust_version_with_command_and_path(
+    cwd: &Path,
+    deadline: Instant,
+    command: &Path,
+    path: Option<&str>,
+) -> Result<Option<String>, RuntimeCollectError> {
     let Some(root) = find_rust_project_root(cwd) else {
         return Ok(None);
     };
     let timeout = remaining_time(deadline)?;
-    let mut child = Command::new(command)
+    let mut command = runtime_command(command, path);
+    let mut child = command
         .args(RUSTC_ARGS)
         .current_dir(root)
         .stdout(Stdio::piped())
@@ -287,56 +305,97 @@ fn collect_rust_version_with_command(
     Ok(parse_rustc_version(&String::from_utf8_lossy(&output)))
 }
 
+#[cfg(test)]
 fn collect_node_version_with_command(
     cwd: &Path,
     deadline: Instant,
     command: &Path,
+) -> Result<Option<String>, RuntimeCollectError> {
+    collect_node_version_with_command_and_path(cwd, deadline, command, None)
+}
+
+fn collect_node_version_with_command_and_path(
+    cwd: &Path,
+    deadline: Instant,
+    command: &Path,
+    path: Option<&str>,
 ) -> Result<Option<String>, RuntimeCollectError> {
     if !is_node_project_dir(cwd) {
         return Ok(None);
     }
 
     let timeout = remaining_time(deadline)?;
-    let output = collect_command_output(command, NODE_ARGS, cwd, timeout)?;
+    let output = collect_command_output(command, NODE_ARGS, cwd, timeout, path)?;
 
     Ok(parse_node_version(&String::from_utf8_lossy(&output)))
 }
 
+#[cfg(test)]
 fn collect_bun_version_with_command(
     cwd: &Path,
     deadline: Instant,
     command: &Path,
+) -> Result<Option<String>, RuntimeCollectError> {
+    collect_bun_version_with_command_and_path(cwd, deadline, command, None)
+}
+
+fn collect_bun_version_with_command_and_path(
+    cwd: &Path,
+    deadline: Instant,
+    command: &Path,
+    path: Option<&str>,
 ) -> Result<Option<String>, RuntimeCollectError> {
     if !is_bun_project_dir(cwd) {
         return Ok(None);
     }
 
     let timeout = remaining_time(deadline)?;
-    let output = collect_command_output(command, BUN_ARGS, cwd, timeout)?;
+    let output = collect_command_output(command, BUN_ARGS, cwd, timeout, path)?;
 
     Ok(parse_bun_version(&String::from_utf8_lossy(&output)))
 }
 
+#[cfg(test)]
 fn collect_deno_version_with_command(
     cwd: &Path,
     deadline: Instant,
     command: &Path,
+) -> Result<Option<String>, RuntimeCollectError> {
+    collect_deno_version_with_command_and_path(cwd, deadline, command, None)
+}
+
+fn collect_deno_version_with_command_and_path(
+    cwd: &Path,
+    deadline: Instant,
+    command: &Path,
+    path: Option<&str>,
 ) -> Result<Option<String>, RuntimeCollectError> {
     if !is_deno_project_dir(cwd) {
         return Ok(None);
     }
 
     let timeout = remaining_time(deadline)?;
-    let output = collect_command_output(command, DENO_ARGS, cwd, timeout)?;
+    let output = collect_command_output(command, DENO_ARGS, cwd, timeout, path)?;
 
     Ok(parse_deno_version(&String::from_utf8_lossy(&output)))
 }
 
+#[cfg(test)]
 fn collect_python_version_with_commands(
     cwd: &Path,
     virtual_env: Option<&Path>,
     deadline: Instant,
     commands: &[PathBuf],
+) -> Result<Option<String>, RuntimeCollectError> {
+    collect_python_version_with_commands_and_path(cwd, virtual_env, deadline, commands, None)
+}
+
+fn collect_python_version_with_commands_and_path(
+    cwd: &Path,
+    virtual_env: Option<&Path>,
+    deadline: Instant,
+    commands: &[PathBuf],
+    path: Option<&str>,
 ) -> Result<Option<String>, RuntimeCollectError> {
     if !is_python_project_dir(cwd, virtual_env) {
         return Ok(None);
@@ -344,7 +403,7 @@ fn collect_python_version_with_commands(
 
     for command in commands {
         let timeout = remaining_time(deadline)?;
-        match collect_command_output(command, PYTHON_ARGS, cwd, timeout) {
+        match collect_command_output(command, PYTHON_ARGS, cwd, timeout, path) {
             Ok(output) => {
                 if let Some(version) = parse_python_version(&String::from_utf8_lossy(&output)) {
                     return Ok(Some(version));
@@ -364,8 +423,10 @@ fn collect_command_output(
     args: &[&str],
     cwd: &Path,
     timeout: Duration,
+    path: Option<&str>,
 ) -> Result<Vec<u8>, RuntimeCollectError> {
-    let mut child = Command::new(command)
+    let mut command = runtime_command(command, path);
+    let mut child = command
         .args(args)
         .current_dir(cwd)
         .stdout(Stdio::piped())
@@ -949,6 +1010,32 @@ fn python_cache_source(cwd: &Path, virtual_env: Option<&Path>) -> String {
     }
 }
 
+fn runtime_cache_source(source: impl AsRef<str>, path: Option<&str>) -> String {
+    let source = source.as_ref();
+    match request_path(path) {
+        Some(path) => format!("{source}|path={:016x}", path_digest(path)),
+        None => source.to_string(),
+    }
+}
+
+fn path_digest(path: &str) -> u64 {
+    let mut hasher = DefaultHasher::new();
+    path.hash(&mut hasher);
+    hasher.finish()
+}
+
+fn runtime_command(command: &Path, path: Option<&str>) -> Command {
+    let mut command = Command::new(command);
+    if let Some(path) = request_path(path) {
+        command.env("PATH", path);
+    }
+    command
+}
+
+fn request_path(path: Option<&str>) -> Option<&str> {
+    path.filter(|value| !value.is_empty())
+}
+
 fn python_command_paths(virtual_env: Option<&Path>) -> Vec<PathBuf> {
     let venv_python = virtual_env.map(|virtual_env| virtual_env.join("bin").join("python"));
     venv_python
@@ -1072,6 +1159,7 @@ fn aws_style(config: &SegmentConfig) -> Style {
 
 #[cfg(test)]
 mod tests {
+    use std::ffi::OsStr;
     use std::fs;
     use std::io::Write as _;
     use std::time::Duration;
@@ -1104,7 +1192,47 @@ mod tests {
     fn cache_key_is_none_outside_rust_projects() {
         let tempdir = tempfile::tempdir().expect("tempdir should be created");
 
-        assert_eq!(rust_cache_key(tempdir.path(), 1), None);
+        assert_eq!(rust_cache_key(tempdir.path(), None, 1), None);
+    }
+
+    #[test]
+    fn runtime_cache_key_changes_when_path_changes() {
+        let tempdir = tempfile::tempdir().expect("tempdir should be created");
+        fs::write(tempdir.path().join("package.json"), "{}").expect("marker should be written");
+
+        let first = node_cache_key(tempdir.path(), Some("/opt/node-a/bin"), 1)
+            .expect("node key should exist");
+        let same = node_cache_key(tempdir.path(), Some("/opt/node-a/bin"), 1)
+            .expect("node key should exist");
+        let second = node_cache_key(tempdir.path(), Some("/opt/node-b/bin"), 1)
+            .expect("node key should exist");
+        let fallback = node_cache_key(tempdir.path(), None, 1).expect("node key should exist");
+
+        assert_eq!(first, same);
+        assert_ne!(first, second);
+        assert_ne!(first, fallback);
+    }
+
+    #[test]
+    fn runtime_command_uses_request_path_when_present() {
+        let command = runtime_command(Path::new("node"), Some("/opt/node/bin"));
+        let path = command
+            .get_envs()
+            .find(|(key, _value)| *key == OsStr::new("PATH"))
+            .and_then(|(_key, value)| value);
+
+        assert_eq!(path, Some(OsStr::new("/opt/node/bin")));
+    }
+
+    #[test]
+    fn runtime_command_leaves_path_unset_when_missing() {
+        let command = runtime_command(Path::new("node"), None);
+
+        assert!(
+            command
+                .get_envs()
+                .all(|(key, _value)| key != OsStr::new("PATH"))
+        );
     }
 
     #[test]

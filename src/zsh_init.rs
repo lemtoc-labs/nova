@@ -2,13 +2,17 @@
 
 use std::path::Path;
 
+use crate::worker::protocol;
+
 const INIT_ZSH: &str = include_str!("../shell/init.zsh");
 
 pub fn render_init_script(binary_path: &Path) -> String {
-    INIT_ZSH.replace(
-        "@NOVA_BIN@",
-        &zsh_single_quote(&binary_path.to_string_lossy()),
-    )
+    INIT_ZSH
+        .replace(
+            "@NOVA_BIN@",
+            &zsh_single_quote(&binary_path.to_string_lossy()),
+        )
+        .replace("@NOVA_PROTOCOL_VERSION@", protocol::VERSION)
 }
 
 fn zsh_single_quote(input: &str) -> String {
@@ -24,6 +28,15 @@ mod tests {
         let script = render_init_script(Path::new("/tmp/nova bin"));
 
         assert!(script.contains("typeset -g _nova_bin='/tmp/nova bin'"));
+    }
+
+    #[test]
+    fn embeds_the_protocol_version() {
+        let script = render_init_script(Path::new("/tmp/nova"));
+
+        assert!(script.contains("typeset -g _nova_protocol_version=6"));
+        assert!(script.contains("\"${fields[2]}\" == \"$_nova_protocol_version\""));
+        assert!(!script.contains("@NOVA_PROTOCOL_VERSION@"));
     }
 
     #[test]
@@ -69,5 +82,12 @@ mod tests {
                 "${HOME:-}${_nova_nul}${AWSU_PROFILE:-}${_nova_nul}${AWS_VAULT:-}${_nova_nul}${AWSUME_PROFILE:-}${_nova_nul}${AWS_PROFILE:-}${_nova_nul}${AWS_SSO_PROFILE:-}${_nova_nul}${AWS_REGION:-}${_nova_nul}${AWS_DEFAULT_REGION:-}${_nova_nul}${AWS_CONFIG_FILE:-}${_nova_nul}${AWS_SHARED_CREDENTIALS_FILE:-}${_nova_nul}${AWS_CREDENTIALS_FILE:-}${_nova_nul}${AWS_ACCESS_KEY_ID:+1}${_nova_nul}${AWS_SECRET_ACCESS_KEY:+1}${_nova_nul}${AWS_SESSION_TOKEN:+1}"
             )
         );
+    }
+
+    #[test]
+    fn sends_path_in_render_requests() {
+        let script = render_init_script(Path::new("/tmp/nova"));
+
+        assert!(script.contains("${AWS_SESSION_TOKEN:+1}${_nova_nul}${PATH:-}${_nova_rs}"));
     }
 }

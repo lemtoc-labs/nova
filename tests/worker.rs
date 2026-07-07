@@ -305,6 +305,89 @@ fn worker_sends_update_when_node_version_finishes() {
 }
 
 #[test]
+fn worker_uses_request_path_for_node_version() {
+    let _guard = worker_test_lock();
+    let tempdir = tempfile::tempdir().expect("tempdir should be created");
+    let runtime_dir = tempdir.path().join("runtime");
+    fs::create_dir(&runtime_dir).expect("runtime dir should be created");
+    create_fifo(runtime_dir.join("req"));
+    create_fifo(runtime_dir.join("resp"));
+
+    let project = tempdir.path().join("project");
+    fs::create_dir(&project).expect("project dir should be created");
+    fs::write(project.join("package.json"), "{}").expect("package.json should be written");
+
+    let config_path = tempdir.path().join("nova.toml");
+    fs::write(
+        &config_path,
+        r#"
+        [layout]
+        lines = 2
+
+        [layout.line1]
+        left = ["dir", "node_version"]
+        right = []
+
+        [layout.line2]
+        left = ["prompt_char"]
+        right = []
+        "#,
+    )
+    .expect("config should be written");
+
+    let bin_dir = tempdir.path().join("request-bin");
+    fs::create_dir(&bin_dir).expect("bin dir should be created");
+    write_script(&bin_dir, "node", "printf 'v20.0.0\\n'\n");
+
+    let mut child = StdCommand::new(cargo_bin("nova"))
+        .arg("worker")
+        .arg("--dir")
+        .arg(&runtime_dir)
+        .arg("--session-token")
+        .arg("test-token")
+        .env("NOVA_CONFIG", &config_path)
+        .env("PATH", "/usr/bin:/bin")
+        .spawn()
+        .expect("worker should spawn");
+
+    let mut request = open_fifo_write(runtime_dir.join("req"));
+    let mut response = WorkerReader::new(open_fifo_read(runtime_dir.join("resp")));
+
+    assert_eq!(
+        read_worker_record(&mut response),
+        WorkerRecord::Handshake {
+            session_token: "test-token".to_string()
+        }
+    );
+
+    write_render_request_with_env(
+        &mut request,
+        1,
+        project,
+        160,
+        PromptEnv {
+            path: Some(bin_dir.to_string_lossy().into_owned()),
+            ..PromptEnv::default()
+        },
+    );
+    let (first_status, first_output) = read_prompt_response(&mut response, 1);
+    assert_eq!(first_status, RenderStatus::Partial);
+    assert!(
+        !first_output.prompt.contains("20.0.0"),
+        "first render should not block on node version: {}",
+        first_output.prompt
+    );
+
+    let (update_status, update_output) = read_update_response(&mut response, 1);
+    assert_eq!(update_status, RenderStatus::Final);
+    assert!(update_output.prompt.contains(" 20.0.0"));
+
+    drop(request);
+    drop(response);
+    assert_worker_exits(&mut child);
+}
+
+#[test]
 fn worker_sends_update_when_python_version_finishes() {
     let _guard = worker_test_lock();
     let tempdir = tempfile::tempdir().expect("tempdir should be created");
