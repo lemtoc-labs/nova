@@ -8,6 +8,7 @@ pub struct PromptState {
     pub cwd: PathBuf,
     pub exit_status: i32,
     pub duration_ms: Option<u64>,
+    pub time: Option<String>,
     pub columns: u16,
     pub keymap: Keymap,
     pub env: PromptEnv,
@@ -15,6 +16,8 @@ pub struct PromptState {
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct PromptEnv {
+    pub user: Option<String>,
+    pub host: Option<String>,
     pub virtual_env: Option<PathBuf>,
     pub in_nix_shell: Option<String>,
     pub nix_shell_name: Option<String>,
@@ -43,6 +46,8 @@ pub struct AwsEnv {
 impl PromptEnv {
     pub fn from_current_process() -> Self {
         Self {
+            user: env_string("USER"),
+            host: env_string("HOST").or_else(|| env_string("HOSTNAME")),
             virtual_env: env_path("VIRTUAL_ENV"),
             in_nix_shell: env_string("IN_NIX_SHELL"),
             nix_shell_name: env_string("name"),

@@ -265,17 +265,21 @@ mod tests {
             cwd: PathBuf::from("/Users/me/projects/nova"),
             exit_status: 1,
             duration_ms: Some(2_340),
+            time: Some("11:16:42".to_string()),
             columns: 32,
             keymap: Keymap::Main,
-            env: Default::default(),
+            env: PromptEnv {
+                home: Some(PathBuf::from("/Users/me")),
+                ..PromptEnv::default()
+            },
         };
         let config = Config::default();
 
         assert_snapshot!(
             render(&config, &state).prompt,
             @r###"
-/Users/me/projects/nova     2.3s
-%{[1;31m%}[1]%{[0m%} %{[1;31m%}❯%{[0m%}
+%{[32m%}~/p/nova%{[0m%} +2.3s          11:16:42
+%{[1;31m%}[1]%{[0m%} %{[1;31m%}❯ %{[0m%}
 "###
         );
     }
@@ -286,6 +290,7 @@ mod tests {
             cwd: PathBuf::from("/repo"),
             exit_status: 0,
             duration_ms: Some(5_000),
+            time: None,
             columns: 20,
             keymap: Keymap::Main,
             env: Default::default(),
@@ -303,8 +308,8 @@ mod tests {
         };
 
         let output = render(&config, &state);
-        assert_snapshot!(output.prompt, @r###"/repo %{[1;32m%}❯%{[0m%}"###);
-        assert_snapshot!(output.rprompt, @"5.0s");
+        assert_snapshot!(output.prompt, @r###"%{[32m%}/repo%{[0m%} ❯ "###);
+        assert_snapshot!(output.rprompt, @"+5s");
     }
 
     #[test]
@@ -313,6 +318,7 @@ mod tests {
             cwd: PathBuf::from("/repo"),
             exit_status: 0,
             duration_ms: None,
+            time: None,
             columns: 80,
             keymap: Keymap::Main,
             env: Default::default(),
@@ -364,6 +370,7 @@ mod tests {
             cwd: PathBuf::from("/repo"),
             exit_status: 0,
             duration_ms: None,
+            time: None,
             columns: 80,
             keymap: Keymap::Main,
             env: Default::default(),
@@ -412,6 +419,7 @@ mod tests {
             cwd: PathBuf::from("/tmp/100%real"),
             exit_status: 0,
             duration_ms: None,
+            time: None,
             columns: 80,
             keymap: Keymap::Main,
             env: Default::default(),
@@ -430,6 +438,7 @@ mod tests {
             cwd: PathBuf::from("/repo"),
             exit_status: 0,
             duration_ms: None,
+            time: None,
             columns: 80,
             keymap: Keymap::Main,
             env: PromptEnv {
@@ -459,6 +468,7 @@ mod tests {
                 cwd: PathBuf::from(format!("/{path}")),
                 exit_status: 0,
                 duration_ms: Some(10_000),
+                time: None,
                 columns,
                 keymap: Keymap::Main,
                 env: Default::default(),

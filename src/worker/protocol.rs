@@ -7,7 +7,7 @@ use thiserror::Error;
 use crate::render::LoweredPrompt;
 use crate::state::{AwsEnv, Keymap, PromptEnv, PromptState};
 
-pub const VERSION: &str = "4";
+pub const VERSION: &str = "5";
 const FIELD_SEPARATOR: char = '\0';
 const RECORD_SEPARATOR: char = '\x1e';
 
@@ -101,6 +101,9 @@ pub fn encode_client_record(record: &ClientRecord) -> String {
                 .unwrap_or_default(),
             request.state.columns.to_string(),
             keymap_name(request.state.keymap).to_string(),
+            request.state.env.user.clone().unwrap_or_default(),
+            request.state.env.host.clone().unwrap_or_default(),
+            request.state.time.clone().unwrap_or_default(),
             request
                 .state
                 .env
@@ -199,7 +202,7 @@ pub fn decode_client_record(record: &str) -> Result<ClientRecord, ProtocolError>
 
     match record_type.as_str() {
         "R" => {
-            expect_field_count(record_type, fields.len(), 25)?;
+            expect_field_count(record_type, fields.len(), 28)?;
             let generation = parse_u64("gen", &fields[1])?;
             let exit_status = parse_i32("exit_status", &fields[3])?;
             let duration_ms = if fields[4].is_empty() {
@@ -216,28 +219,31 @@ pub fn decode_client_record(record: &str) -> Result<ClientRecord, ProtocolError>
                     cwd: PathBuf::from(&fields[2]),
                     exit_status,
                     duration_ms,
+                    time: non_empty_string(&fields[9]),
                     columns,
                     keymap,
                     env: PromptEnv {
-                        virtual_env: non_empty_path(&fields[7]),
-                        in_nix_shell: non_empty_string(&fields[8]),
-                        nix_shell_name: non_empty_string(&fields[9]),
-                        nix_shell_level: non_empty_string(&fields[10]),
-                        home: non_empty_path(&fields[11]),
+                        user: non_empty_string(&fields[7]),
+                        host: non_empty_string(&fields[8]),
+                        virtual_env: non_empty_path(&fields[10]),
+                        in_nix_shell: non_empty_string(&fields[11]),
+                        nix_shell_name: non_empty_string(&fields[12]),
+                        nix_shell_level: non_empty_string(&fields[13]),
+                        home: non_empty_path(&fields[14]),
                         aws: AwsEnv {
-                            awsu_profile: non_empty_string(&fields[12]),
-                            aws_vault: non_empty_string(&fields[13]),
-                            awsume_profile: non_empty_string(&fields[14]),
-                            aws_profile: non_empty_string(&fields[15]),
-                            aws_sso_profile: non_empty_string(&fields[16]),
-                            aws_region: non_empty_string(&fields[17]),
-                            aws_default_region: non_empty_string(&fields[18]),
-                            aws_config_file: non_empty_path(&fields[19]),
-                            aws_shared_credentials_file: non_empty_path(&fields[20]),
-                            aws_credentials_file: non_empty_path(&fields[21]),
-                            aws_access_key_id_present: parse_bool_field(&fields[22]),
-                            aws_secret_access_key_present: parse_bool_field(&fields[23]),
-                            aws_session_token_present: parse_bool_field(&fields[24]),
+                            awsu_profile: non_empty_string(&fields[15]),
+                            aws_vault: non_empty_string(&fields[16]),
+                            awsume_profile: non_empty_string(&fields[17]),
+                            aws_profile: non_empty_string(&fields[18]),
+                            aws_sso_profile: non_empty_string(&fields[19]),
+                            aws_region: non_empty_string(&fields[20]),
+                            aws_default_region: non_empty_string(&fields[21]),
+                            aws_config_file: non_empty_path(&fields[22]),
+                            aws_shared_credentials_file: non_empty_path(&fields[23]),
+                            aws_credentials_file: non_empty_path(&fields[24]),
+                            aws_access_key_id_present: parse_bool_field(&fields[25]),
+                            aws_secret_access_key_present: parse_bool_field(&fields[26]),
+                            aws_session_token_present: parse_bool_field(&fields[27]),
                         },
                     },
                 },
@@ -441,9 +447,12 @@ mod tests {
                 cwd: PathBuf::from("/tmp/nova"),
                 exit_status: 1,
                 duration_ms: Some(123),
+                time: Some("11:16:42".to_string()),
                 columns: 80,
                 keymap: Keymap::ViCommand,
                 env: PromptEnv {
+                    user: Some("nova".to_string()),
+                    host: Some("M4Pro".to_string()),
                     virtual_env: Some(PathBuf::from("/tmp/nova-venv")),
                     in_nix_shell: Some("pure".to_string()),
                     nix_shell_name: Some("nova".to_string()),
@@ -499,6 +508,7 @@ mod tests {
                 cwd: PathBuf::from("/one"),
                 exit_status: 0,
                 duration_ms: None,
+                time: None,
                 columns: 80,
                 keymap: Keymap::Main,
                 env: PromptEnv::default(),
@@ -510,6 +520,7 @@ mod tests {
                 cwd: PathBuf::from("/two"),
                 exit_status: 1,
                 duration_ms: Some(5),
+                time: Some("11:16:42".to_string()),
                 columns: 40,
                 keymap: Keymap::Main,
                 env: PromptEnv::default(),

@@ -26,6 +26,8 @@ const KNOWN_SEGMENTS: &[&str] = &[
     "python_version",
     "rust_version",
     "ssh",
+    "time",
+    "user_host",
 ];
 
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Eq)]
@@ -53,13 +55,18 @@ pub struct LineConfig {
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Eq)]
 #[serde(default)]
 pub struct SegmentConfig {
+    pub character: Option<String>,
+    pub characters: BTreeMap<String, String>,
     pub icon: Option<String>,
     pub icons: BTreeMap<String, String>,
     pub max_components: Option<usize>,
     pub min_ms: Option<u64>,
+    pub prefix: Option<String>,
     pub ttl_ms: Option<u64>,
     pub timeout_ms: Option<u64>,
     pub style: StyleConfig,
+    pub error_style: StyleConfig,
+    pub prefix_style: StyleConfig,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Eq)]
@@ -156,6 +163,7 @@ impl Default for LayoutConfig {
             lines: 2,
             line1: LineConfig {
                 left: vec![
+                    "ssh".to_string(),
                     "dir".to_string(),
                     "git_branch".to_string(),
                     "git_status".to_string(),
@@ -166,8 +174,9 @@ impl Default for LayoutConfig {
                     "python_version".to_string(),
                     "nix_shell".to_string(),
                     "aws".to_string(),
+                    "duration".to_string(),
                 ],
-                right: vec!["duration".to_string()],
+                right: vec!["time".to_string()],
             },
             line2: LineConfig {
                 left: vec!["exit_status".to_string(), "prompt_char".to_string()],
@@ -189,6 +198,7 @@ mod tests {
         assert_eq!(
             config.layout.line1.left,
             [
+                "ssh",
                 "dir",
                 "git_branch",
                 "git_status",
@@ -198,10 +208,11 @@ mod tests {
                 "node_version",
                 "python_version",
                 "nix_shell",
-                "aws"
+                "aws",
+                "duration"
             ]
         );
-        assert_eq!(config.layout.line1.right, ["duration"]);
+        assert_eq!(config.layout.line1.right, ["time"]);
         assert_eq!(config.layout.line2.left, ["exit_status", "prompt_char"]);
     }
 
@@ -223,6 +234,15 @@ mod tests {
             timeout_ms = 1234
             style = { fg = "blue", bold = true }
 
+            [segments.prompt_char]
+            character = ">_"
+            characters = { vi_command = "%" }
+            error_style = { fg = "red", bold = true }
+
+            [segments.duration]
+            prefix = "took "
+            prefix_style = { fg = "cyan", bold = true }
+
             [segments.git_status]
             icons = { staged = "S", untracked = "U", stash = "T" }
             "#,
@@ -230,6 +250,8 @@ mod tests {
         .expect("config should parse");
 
         let dir = config.segment("dir");
+        let prompt_char = config.segment("prompt_char");
+        let duration = config.segment("duration");
         let git_status = config.segment("git_status");
         assert_eq!(config.layout.lines, 1);
         assert_eq!(dir.icon.as_deref(), Some("d"));
@@ -238,6 +260,16 @@ mod tests {
         assert_eq!(dir.timeout_ms, Some(1_234));
         assert_eq!(dir.style.fg.as_deref(), Some("blue"));
         assert!(dir.style.bold);
+        assert_eq!(prompt_char.character.as_deref(), Some(">_"));
+        assert_eq!(
+            prompt_char.characters.get("vi_command").map(String::as_str),
+            Some("%")
+        );
+        assert_eq!(prompt_char.error_style.fg.as_deref(), Some("red"));
+        assert!(prompt_char.error_style.bold);
+        assert_eq!(duration.prefix.as_deref(), Some("took "));
+        assert_eq!(duration.prefix_style.fg.as_deref(), Some("cyan"));
+        assert!(duration.prefix_style.bold);
         assert_eq!(
             git_status.icons.get("staged").map(String::as_str),
             Some("S")
@@ -247,6 +279,12 @@ mod tests {
             Some("U")
         );
         assert_eq!(git_status.icons.get("stash").map(String::as_str), Some("T"));
+    }
+
+    #[test]
+    fn parses_example_config() {
+        Config::from_toml(include_str!("../../examples/config.toml"))
+            .expect("example config should parse");
     }
 
     #[test]

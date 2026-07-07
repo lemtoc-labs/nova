@@ -56,6 +56,7 @@ fn prompt_state(cwd: PathBuf, columns: u16) -> PromptState {
         cwd,
         exit_status: 0,
         duration_ms: Some(12_345),
+        time: Some("11:16:42".to_string()),
         columns,
         keymap: Keymap::Main,
         env: PromptEnv {

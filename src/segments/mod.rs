@@ -7,6 +7,8 @@ pub mod git;
 pub mod prompt_char;
 pub mod runtime;
 pub mod ssh;
+pub mod time;
+pub mod user_host;
 
 use crate::config::{SegmentConfig, StyleConfig};
 use crate::state::PromptState;
@@ -19,6 +21,13 @@ pub trait SyncSegment {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SegmentContent {
     pub id: String,
+    pub text: String,
+    pub style: Style,
+    pub parts: Vec<SegmentPart>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SegmentPart {
     pub text: String,
     pub style: Style,
 }
@@ -34,6 +43,35 @@ impl SegmentContent {
     pub fn new(id: impl Into<String>, text: impl Into<String>, style: Style) -> Self {
         Self {
             id: id.into(),
+            text: strip_control_chars(&text.into()),
+            style,
+            parts: Vec::new(),
+        }
+    }
+
+    pub fn from_parts(id: impl Into<String>, parts: Vec<SegmentPart>) -> Self {
+        Self {
+            id: id.into(),
+            text: parts.iter().map(|part| part.text.as_str()).collect(),
+            style: Style::default(),
+            parts,
+        }
+    }
+
+    pub fn uses_parts(&self) -> bool {
+        !self.parts.is_empty()
+            && self.text
+                == self
+                    .parts
+                    .iter()
+                    .map(|part| part.text.as_str())
+                    .collect::<String>()
+    }
+}
+
+impl SegmentPart {
+    pub fn new(text: impl Into<String>, style: Style) -> Self {
+        Self {
             text: strip_control_chars(&text.into()),
             style,
         }
@@ -71,6 +109,8 @@ pub fn render_sync_segment(
         "nix_shell" => runtime::render_nix_shell(&state.env, config),
         "prompt_char" => prompt_char::PromptCharSegment.render(state, config),
         "ssh" => ssh::SshSegment.render(state, config),
+        "time" => time::TimeSegment.render(state, config),
+        "user_host" => user_host::UserHostSegment.render(state, config),
         _ => None,
     }
 }
