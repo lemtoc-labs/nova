@@ -153,6 +153,67 @@ benchmark stayed in the same range:
 | PR-3 `initial_wait_ms = 10` smoke | `command_lag_ms` | 4 | 0.398 | 0.411 | 0.415 | 0.415 |
 | PR-3 `initial_wait_ms = 10` smoke | `input_lag_ms` | 4 | 0.188 | 0.336 | 0.496 | 0.501 |
 
+### 2026-07-08: PR-4 Initial Wait Default Decision
+
+Environment:
+
+- Git revision: `70647ad` (`feat(worker): add initial render wait budget`)
+- Machine: Apple Silicon `arm64` (local M4 Pro workstation)
+- Shell benchmark: `zsh-bench` via `scripts/bench-zsh`
+- Binary: `target/release/nova`, built with `nix develop -c cargo build --release`
+
+Commands:
+
+```sh
+NOVA_CONFIG=/private/tmp/nova-pr4-bench/initial-wait-0.toml scripts/bench-zsh
+NOVA_CONFIG=/private/tmp/nova-pr4-bench/initial-wait-10.toml scripts/bench-zsh
+NOVA_CONFIG=/private/tmp/nova-pr4-bench/initial-wait-20.toml scripts/bench-zsh
+NOVA_CONFIG=/private/tmp/nova-pr4-bench/initial-wait-40.toml scripts/bench-zsh
+PATH=/private/tmp/nova-pr4-bench/bin:$PATH NOVA_CONFIG=/private/tmp/nova-pr4-bench/initial-wait-0.toml scripts/bench-zsh
+PATH=/private/tmp/nova-pr4-bench/bin:$PATH NOVA_CONFIG=/private/tmp/nova-pr4-bench/initial-wait-10.toml scripts/bench-zsh
+PATH=/private/tmp/nova-pr4-bench/bin:$PATH NOVA_CONFIG=/private/tmp/nova-pr4-bench/initial-wait-20.toml scripts/bench-zsh
+PATH=/private/tmp/nova-pr4-bench/bin:$PATH NOVA_CONFIG=/private/tmp/nova-pr4-bench/initial-wait-40.toml scripts/bench-zsh
+```
+
+The slow-git condition prepended a wrapper that delayed only Nova's
+`git --no-optional-locks status ...` collector command by 30 ms.
+
+| condition | wait | metric | n | min | median | p95 | max |
+| --- | ---: | --- | ---: | ---: | ---: | ---: | ---: |
+| normal | 0 | `first_prompt_lag_ms` | 16 | 25.915 | 27.259 | 29.734 | 34.978 |
+| normal | 0 | `command_lag_ms` | 16 | 0.375 | 0.414 | 0.432 | 0.434 |
+| normal | 0 | `input_lag_ms` | 16 | 0.180 | 0.581 | 0.690 | 0.702 |
+| normal | 10 | `first_prompt_lag_ms` | 16 | 25.823 | 27.216 | 30.385 | 38.080 |
+| normal | 10 | `command_lag_ms` | 16 | 0.336 | 0.384 | 0.428 | 0.434 |
+| normal | 10 | `input_lag_ms` | 16 | 0.118 | 0.426 | 0.632 | 0.687 |
+| normal | 20 | `first_prompt_lag_ms` | 16 | 39.154 | 39.959 | 48.773 | 50.833 |
+| normal | 20 | `command_lag_ms` | 16 | 0.391 | 0.426 | 0.448 | 0.479 |
+| normal | 20 | `input_lag_ms` | 16 | 0.404 | 0.617 | 0.682 | 0.704 |
+| normal | 40 | `first_prompt_lag_ms` | 16 | 32.811 | 39.521 | 42.196 | 42.647 |
+| normal | 40 | `command_lag_ms` | 16 | 0.344 | 0.417 | 0.430 | 0.430 |
+| normal | 40 | `input_lag_ms` | 16 | 0.165 | 0.559 | 0.707 | 0.710 |
+| slow git | 0 | `first_prompt_lag_ms` | 16 | 26.626 | 27.467 | 29.858 | 35.292 |
+| slow git | 0 | `command_lag_ms` | 16 | 0.304 | 0.372 | 0.385 | 0.385 |
+| slow git | 0 | `input_lag_ms` | 16 | 0.157 | 0.260 | 0.394 | 0.490 |
+| slow git | 10 | `first_prompt_lag_ms` | 16 | 22.616 | 27.359 | 30.417 | 36.163 |
+| slow git | 10 | `command_lag_ms` | 16 | 0.344 | 0.379 | 0.393 | 0.394 |
+| slow git | 10 | `input_lag_ms` | 16 | 0.202 | 0.250 | 0.451 | 0.550 |
+| slow git | 20 | `first_prompt_lag_ms` | 16 | 39.775 | 42.062 | 45.995 | 51.193 |
+| slow git | 20 | `command_lag_ms` | 16 | 0.329 | 0.374 | 0.382 | 0.386 |
+| slow git | 20 | `input_lag_ms` | 16 | 0.124 | 0.262 | 0.432 | 0.728 |
+| slow git | 40 | `first_prompt_lag_ms` | 16 | 58.147 | 67.072 | 70.684 | 75.085 |
+| slow git | 40 | `command_lag_ms` | 16 | 0.325 | 0.374 | 0.393 | 0.398 |
+| slow git | 40 | `input_lag_ms` | 16 | 0.187 | 0.239 | 0.462 | 0.646 |
+
+Decision:
+
+- Keep the default `initial_wait_ms` at `0`.
+- `input_lag_ms` is already far below the 10 ms green threshold at `0` in both
+  normal and slow-git conditions.
+- `10` ms does not materially improve command or input lag.
+- `20` and `40` ms increase first prompt lag, with `40` ms reaching a 67.072 ms
+  median under the slow-git condition.
+
 ## GitHub Actions Benchmarks
 
 Nova runs two zsh-bench workflows with different purposes:

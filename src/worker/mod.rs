@@ -16,7 +16,7 @@ use thiserror::Error;
 use crate::cache::{AsyncValue, CacheKey, SegmentCache};
 use crate::config::error::ConfigWarning;
 use crate::config::load::load_config;
-use crate::config::{Config, SegmentConfig};
+use crate::config::{Config, DEFAULT_INITIAL_WAIT_MS, SegmentConfig};
 use crate::render::{AsyncSegmentValues, LoweredPrompt, render_with_async};
 use crate::segments::SegmentContent;
 use crate::segments::git::{
@@ -868,7 +868,10 @@ fn render_status(config: &Config, async_values: &AsyncSegmentValues) -> RenderSt
 }
 
 fn initial_wait_ms(config: &Config) -> u64 {
-    config.async_config.initial_wait_ms.unwrap_or_default()
+    config
+        .async_config
+        .initial_wait_ms
+        .unwrap_or(DEFAULT_INITIAL_WAIT_MS)
 }
 
 fn segment_timeout(config: &SegmentConfig, default: Duration) -> Duration {

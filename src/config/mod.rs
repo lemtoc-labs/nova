@@ -29,6 +29,7 @@ const KNOWN_SEGMENTS: &[&str] = &[
     "time",
     "user_host",
 ];
+pub const DEFAULT_INITIAL_WAIT_MS: u64 = 0;
 
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Eq)]
 #[serde(default)]
