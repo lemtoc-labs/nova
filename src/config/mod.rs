@@ -52,6 +52,7 @@ pub struct AsyncConfig {
 #[serde(default)]
 pub struct LayoutConfig {
     pub lines: u8,
+    pub separator: Option<String>,
     pub line1: LineConfig,
     pub line2: LineConfig,
 }
@@ -246,6 +247,7 @@ impl Default for LayoutConfig {
     fn default() -> Self {
         Self {
             lines: 2,
+            separator: None,
             line1: LineConfig {
                 left: vec![
                     "ssh".to_string(),
@@ -271,6 +273,12 @@ impl Default for LayoutConfig {
     }
 }
 
+impl LayoutConfig {
+    pub fn separator(&self) -> &str {
+        self.separator.as_deref().unwrap_or(" ")
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -281,6 +289,8 @@ mod tests {
 
         assert_eq!(config.async_config.initial_wait_ms, None);
         assert_eq!(config.layout.lines, 2);
+        assert_eq!(config.layout.separator, None);
+        assert_eq!(config.layout.separator(), " ");
         assert_eq!(
             config.layout.line1.left,
             [
@@ -308,6 +318,7 @@ mod tests {
             r##"
             [layout]
             lines = 1
+            separator = " | "
 
             [async]
             initial_wait_ms = 10
@@ -350,6 +361,8 @@ mod tests {
         let aws = config.segment("aws");
         let git_status = config.segment("git_status");
         assert_eq!(config.layout.lines, 1);
+        assert_eq!(config.layout.separator.as_deref(), Some(" | "));
+        assert_eq!(config.layout.separator(), " | ");
         assert_eq!(dir.icon.as_deref(), Some("d"));
         assert_eq!(dir.max_components, Some(2));
         assert_eq!(dir.ttl_ms, Some(5_000));

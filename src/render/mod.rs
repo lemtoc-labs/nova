@@ -27,7 +27,11 @@ pub struct LoweredPrompt {
 }
 
 pub fn render(config: &Config, state: &PromptState) -> LoweredPrompt {
-    lower(render_structured(config, state), state.columns)
+    lower_with_separator(
+        render_structured(config, state),
+        state.columns,
+        config.layout.separator(),
+    )
 }
 
 pub fn render_with_async(
@@ -35,9 +39,10 @@ pub fn render_with_async(
     state: &PromptState,
     async_values: &AsyncSegmentValues,
 ) -> LoweredPrompt {
-    lower(
+    lower_with_separator(
         render_structured_with_async(config, state, async_values),
         state.columns,
+        config.layout.separator(),
     )
 }
 
@@ -74,31 +79,35 @@ fn render_structured_inner(
 }
 
 pub fn lower(rendered: RenderedPrompt, columns: u16) -> LoweredPrompt {
+    lower_with_separator(rendered, columns, " ")
+}
+
+fn lower_with_separator(rendered: RenderedPrompt, columns: u16, separator: &str) -> LoweredPrompt {
     let columns = usize::from(columns);
     let mut line1_left = rendered.line1_left;
     let mut line1_right = rendered.line1_right;
     let mut line2_left = rendered.line2_left;
     let mut line2_right = rendered.line2_right;
 
-    fit_prompt_line(&mut line1_left, &mut line1_right, columns);
-    fit_prompt_line(&mut line2_left, &mut line2_right, columns);
+    fit_prompt_line(&mut line1_left, &mut line1_right, columns, separator);
+    fit_prompt_line(&mut line2_left, &mut line2_right, columns, separator);
 
     if line2_left.is_empty() && line2_right.is_empty() {
         return LoweredPrompt {
-            prompt: lower_last_line(&line1_left),
-            rprompt: lower_side(&line1_right),
+            prompt: lower_last_line(&line1_left, separator),
+            rprompt: lower_side(&line1_right, separator),
         };
     }
 
     let prompt = {
-        let first_line = lower_first_line(&line1_left, &line1_right, columns);
-        let second_line = lower_last_line(&line2_left);
+        let first_line = lower_first_line(&line1_left, &line1_right, columns, separator);
+        let second_line = lower_last_line(&line2_left, separator);
         format!("{first_line}\n{second_line}")
     };
 
     LoweredPrompt {
         prompt,
-        rprompt: lower_side(&line2_right),
+        rprompt: lower_side(&line2_right, separator),
     }
 }
 
@@ -148,62 +157,69 @@ fn async_value_content(value: &AsyncValue) -> Option<SegmentContent> {
     }
 }
 
-fn lower_first_line(left: &[SegmentContent], right: &[SegmentContent], columns: usize) -> String {
-    let lowered_left = lower_side(left);
-    let lowered_right = lower_side(right);
+fn lower_first_line(
+    left: &[SegmentContent],
+    right: &[SegmentContent],
+    columns: usize,
+    separator: &str,
+) -> String {
+    let lowered_left = lower_side(left, separator);
+    let lowered_right = lower_side(right, separator);
 
     if right.is_empty() {
         return lowered_left;
     }
 
-    let left_width = side_width(left);
-    let right_width = side_width(right);
+    let left_width = side_width(left, separator);
+    let right_width = side_width(right, separator);
     let padding = columns.saturating_sub(left_width + right_width);
     format!("{lowered_left}{}{lowered_right}", " ".repeat(padding))
 }
 
-fn lower_last_line(left: &[SegmentContent]) -> String {
-    lower_side(left)
+fn lower_last_line(left: &[SegmentContent], separator: &str) -> String {
+    lower_side(left, separator)
 }
 
-fn lower_side(segments: &[SegmentContent]) -> String {
+fn lower_side(segments: &[SegmentContent], separator: &str) -> String {
+    let separator = zsh::escape_prompt_text(separator);
     segments
         .iter()
         .map(zsh::lower_segment)
         .collect::<Vec<_>>()
-        .join(" ")
+        .join(&separator)
 }
 
 fn fit_prompt_line(
     left: &mut Vec<SegmentContent>,
     right: &mut Vec<SegmentContent>,
     columns: usize,
+    separator: &str,
 ) {
-    fit_side(left, columns);
+    fit_side(left, columns, separator);
 
     if left.is_empty() {
-        fit_side(right, columns);
+        fit_side(right, columns, separator);
         return;
     }
 
-    let available_for_right = columns.saturating_sub(side_width(left));
-    if side_width(right) > available_for_right {
+    let available_for_right = columns.saturating_sub(side_width(left, separator));
+    if side_width(right, separator) > available_for_right {
         right.clear();
     }
 }
 
-fn fit_side(segments: &mut Vec<SegmentContent>, columns: usize) {
-    if side_width(segments) <= columns {
+fn fit_side(segments: &mut Vec<SegmentContent>, columns: usize, separator: &str) {
+    if side_width(segments, separator) <= columns {
         return;
     }
 
-    shrink_dir_segment(segments, columns);
+    shrink_dir_segment(segments, columns, separator);
 
-    while side_width(segments) > columns && segments.len() > 1 {
+    while side_width(segments, separator) > columns && segments.len() > 1 {
         segments.pop();
     }
 
-    if side_width(segments) > columns
+    if side_width(segments, separator) > columns
         && let Some(segment) = segments.first_mut()
     {
         let next_text = if segment.id == "dir" {
@@ -215,7 +231,7 @@ fn fit_side(segments: &mut Vec<SegmentContent>, columns: usize) {
     }
 }
 
-fn shrink_dir_segment(segments: &mut [SegmentContent], columns: usize) {
+fn shrink_dir_segment(segments: &mut [SegmentContent], columns: usize, separator: &str) {
     let Some(position) = segments.iter().position(|segment| segment.id == "dir") else {
         return;
     };
@@ -226,12 +242,12 @@ fn shrink_dir_segment(segments: &mut [SegmentContent], columns: usize) {
         .filter(|(index, _segment)| *index != position)
         .map(|(_index, segment)| width::display_width(&segment.text))
         .sum::<usize>();
-    let separator_width = segments.len().saturating_sub(1);
+    let separator_width = separator_total_width(segments, separator);
     let available = columns.saturating_sub(other_width + separator_width);
     segments[position].text = width::truncate_start(&segments[position].text, available);
 }
 
-fn side_width(segments: &[SegmentContent]) -> usize {
+fn side_width(segments: &[SegmentContent], separator: &str) -> usize {
     if segments.is_empty() {
         return 0;
     }
@@ -240,7 +256,11 @@ fn side_width(segments: &[SegmentContent]) -> usize {
         .iter()
         .map(|segment| width::display_width(&segment.text))
         .sum::<usize>();
-    content_width + segments.len().saturating_sub(1)
+    content_width + separator_total_width(segments, separator)
+}
+
+fn separator_total_width(segments: &[SegmentContent], separator: &str) -> usize {
+    width::display_width(separator) * segments.len().saturating_sub(1)
 }
 
 #[derive(Default)]
@@ -302,6 +322,7 @@ mod tests {
             async_config: Default::default(),
             layout: LayoutConfig {
                 lines: 1,
+                separator: None,
                 line1: LineConfig {
                     left: vec!["dir".to_string(), "prompt_char".to_string()],
                     right: vec!["duration".to_string()],
@@ -314,6 +335,37 @@ mod tests {
         let output = render(&config, &state);
         assert_snapshot!(output.prompt, @r###"%{[32m%}/repo%{[0m%} ❯ "###);
         assert_snapshot!(output.rprompt, @"+5s");
+    }
+
+    #[test]
+    fn snapshots_custom_separator() {
+        let state = PromptState {
+            cwd: PathBuf::from("/repo"),
+            exit_status: 0,
+            duration_ms: None,
+            time: None,
+            columns: 80,
+            keymap: Keymap::Main,
+            env: Default::default(),
+        };
+        let config = Config {
+            async_config: Default::default(),
+            layout: LayoutConfig {
+                lines: 1,
+                separator: Some(" | ".to_string()),
+                line1: LineConfig {
+                    left: vec!["dir".to_string(), "prompt_char".to_string()],
+                    right: Vec::new(),
+                },
+                line2: LineConfig::default(),
+            },
+            segments: Default::default(),
+        };
+
+        assert_snapshot!(
+            render(&config, &state).prompt,
+            @r###"%{[32m%}/repo%{[0m%} | ❯ "###
+        );
     }
 
     #[test]
@@ -331,6 +383,7 @@ mod tests {
             async_config: Default::default(),
             layout: LayoutConfig {
                 lines: 1,
+                separator: None,
                 line1: LineConfig {
                     left: vec![
                         "dir".to_string(),
@@ -392,6 +445,7 @@ mod tests {
             async_config: Default::default(),
             layout: LayoutConfig {
                 lines: 1,
+                separator: None,
                 line1: LineConfig {
                     left: vec![
                         "git_branch".to_string(),
@@ -472,6 +526,7 @@ mod tests {
             async_config: Default::default(),
             layout: LayoutConfig {
                 lines: 1,
+                separator: None,
                 line1: LineConfig {
                     left: vec!["nix_shell".to_string()],
                     right: Vec::new(),
@@ -497,6 +552,45 @@ mod tests {
                 env: Default::default(),
             };
             let output = render(&Config::default(), &state);
+            let first_line = output.prompt.lines().next().unwrap_or_default();
+
+            prop_assert!(visible_prompt_width(first_line) <= usize::from(columns));
+        }
+
+        #[test]
+        fn first_line_never_exceeds_columns_with_custom_separator(
+            path in "\\PC{0,80}",
+            separator in "\\PC{0,4}",
+            columns in 1_u16..120,
+        ) {
+            let state = PromptState {
+                cwd: PathBuf::from(format!("/{path}")),
+                exit_status: 0,
+                duration_ms: Some(10_000),
+                time: None,
+                columns,
+                keymap: Keymap::Main,
+                env: Default::default(),
+            };
+            let config = Config {
+                async_config: Default::default(),
+                layout: LayoutConfig {
+                    lines: 1,
+                    separator: Some(separator),
+                    line1: LineConfig {
+                        left: vec![
+                            "dir".to_string(),
+                            "git_branch".to_string(),
+                            "duration".to_string(),
+                            "prompt_char".to_string(),
+                        ],
+                        right: Vec::new(),
+                    },
+                    line2: LineConfig::default(),
+                },
+                segments: Default::default(),
+            };
+            let output = render(&config, &state);
             let first_line = output.prompt.lines().next().unwrap_or_default();
 
             prop_assert!(visible_prompt_width(first_line) <= usize::from(columns));

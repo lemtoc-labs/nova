@@ -32,6 +32,8 @@
 
 [layout]
 lines = 2
+# Optional separator inserted between rendered segments. Defaults to " ".
+# separator = " "
 
 [layout.line1]
 left = [

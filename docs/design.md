@@ -524,6 +524,7 @@ error.
 ```toml
 [layout]
 lines = 2                       # 1 or 2
+separator = " "                 # inserted between rendered segments
 
 [layout.line1]
 left  = ["dir", "git_branch", "git_status", "rust_version"]
