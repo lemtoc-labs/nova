@@ -110,3 +110,14 @@ benchmark is needed, then trigger the workflow from GitHub Actions.
 The self-hosted workflow stores benchmark history in the `gh-pages` branch under
 `bench/zsh`. Configure GitHub Pages to publish from the `gh-pages` branch root;
 the dashboard is then available at `/nova/bench/zsh/`.
+
+Preview the dashboard locally before changing the published template:
+
+```sh
+scripts/preview-zsh-bench-dashboard
+```
+
+The preview script writes the repository dashboard template and the latest
+`origin/gh-pages:bench/zsh/data.js` into `.preview/zsh-bench-dashboard`, then
+prints the local `file://` URL to open in a browser. The `.preview` directory is
+ignored by git.
