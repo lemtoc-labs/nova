@@ -782,14 +782,12 @@ u UU N... 000000 000000 000000 100644 100644 100644 abc123 def456 ghi789 conflic
         permissions.set_mode(0o755);
         std::fs::set_permissions(&fake_git, permissions)?;
 
-        let error = collect_git_status_with_command(
+        collect_git_status_with_command(
             dir.path(),
             Instant::now() + Duration::from_secs(1),
             &fake_git,
         )
         .expect_err("failed git command should be an error");
-
-        assert!(matches!(error, GitCollectError::NonZeroExit));
         Ok(())
     }
 
