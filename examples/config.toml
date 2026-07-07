@@ -24,12 +24,16 @@
 # black, red, green, yellow, blue, magenta, cyan, white.
 # bright_black, bright_red, bright_green, bright_yellow, bright_blue,
 # bright_magenta, bright_cyan, bright_white.
+# 0-255 for ANSI 256-color indexes, for example "202".
+# #RRGGBB for truecolor, for example "#ff8800".
 #
 # Icon keys accept an empty string to hide the icon, for example:
 # icon = ""
 
 [layout]
 lines = 2
+# Optional separator inserted between rendered segments. Defaults to " ".
+# separator = " "
 
 [layout.line1]
 left = [
@@ -92,6 +96,8 @@ style = { fg = "magenta", bold = true }
 # git_status controls the async git refresh for both git_branch and git_status.
 timeout_ms = 1000
 ttl_ms = 0
+# Optional placeholder while async data is still loading. Defaults to hidden.
+# loading = "…"
 style = { fg = "red", bold = true }
 
 [segments.git_status.icons]

@@ -52,6 +52,7 @@ pub struct AsyncConfig {
 #[serde(default)]
 pub struct LayoutConfig {
     pub lines: u8,
+    pub separator: Option<String>,
     pub line1: LineConfig,
     pub line2: LineConfig,
 }
@@ -70,6 +71,7 @@ pub struct SegmentConfig {
     pub characters: BTreeMap<String, String>,
     pub icon: Option<String>,
     pub icons: BTreeMap<String, String>,
+    pub loading: Option<String>,
     pub max_components: Option<usize>,
     pub min_ms: Option<u64>,
     pub force_display: Option<bool>,
@@ -140,6 +142,24 @@ impl Config {
             }
         }
 
+        for (segment_id, segment_config) in &self.segments {
+            push_style_warnings(
+                &mut warnings,
+                &format!("segments.{segment_id}.style"),
+                &segment_config.style,
+            );
+            push_style_warnings(
+                &mut warnings,
+                &format!("segments.{segment_id}.error_style"),
+                &segment_config.error_style,
+            );
+            push_style_warnings(
+                &mut warnings,
+                &format!("segments.{segment_id}.prefix_style"),
+                &segment_config.prefix_style,
+            );
+        }
+
         warnings
     }
 
@@ -170,10 +190,65 @@ fn is_known_segment(segment: &str) -> bool {
     KNOWN_SEGMENTS.contains(&segment)
 }
 
+fn push_style_warnings(warnings: &mut Vec<ConfigWarning>, location: &str, style: &StyleConfig) {
+    if let Some(color) = &style.fg
+        && !is_supported_color(color)
+    {
+        warnings.push(ConfigWarning::InvalidColor {
+            location: format!("{location}.fg"),
+            color: color.clone(),
+        });
+    }
+
+    if let Some(color) = &style.bg
+        && !is_supported_color(color)
+    {
+        warnings.push(ConfigWarning::InvalidColor {
+            location: format!("{location}.bg"),
+            color: color.clone(),
+        });
+    }
+}
+
+fn is_supported_color(color: &str) -> bool {
+    is_named_color(color) || color.parse::<u8>().is_ok() || is_truecolor(color)
+}
+
+fn is_named_color(color: &str) -> bool {
+    matches!(
+        color,
+        "black"
+            | "red"
+            | "green"
+            | "yellow"
+            | "blue"
+            | "magenta"
+            | "cyan"
+            | "white"
+            | "bright_black"
+            | "bright_red"
+            | "bright_green"
+            | "bright_yellow"
+            | "bright_blue"
+            | "bright_magenta"
+            | "bright_cyan"
+            | "bright_white"
+    )
+}
+
+fn is_truecolor(color: &str) -> bool {
+    color.len() == 7
+        && color.starts_with('#')
+        && color[1..]
+            .chars()
+            .all(|character| character.is_ascii_hexdigit())
+}
+
 impl Default for LayoutConfig {
     fn default() -> Self {
         Self {
             lines: 2,
+            separator: None,
             line1: LineConfig {
                 left: vec![
                     "ssh".to_string(),
@@ -199,6 +274,12 @@ impl Default for LayoutConfig {
     }
 }
 
+impl LayoutConfig {
+    pub fn separator(&self) -> &str {
+        self.separator.as_deref().unwrap_or(" ")
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -209,6 +290,8 @@ mod tests {
 
         assert_eq!(config.async_config.initial_wait_ms, None);
         assert_eq!(config.layout.lines, 2);
+        assert_eq!(config.layout.separator, None);
+        assert_eq!(config.layout.separator(), " ");
         assert_eq!(
             config.layout.line1.left,
             [
@@ -233,9 +316,10 @@ mod tests {
     #[test]
     fn parses_segment_settings() {
         let config = Config::from_toml(
-            r#"
+            r##"
             [layout]
             lines = 1
+            separator = " | "
 
             [async]
             initial_wait_ms = 10
@@ -258,15 +342,17 @@ mod tests {
 
             [segments.duration]
             prefix = "took "
-            prefix_style = { fg = "cyan", bold = true }
+            prefix_style = { fg = "#33ccff", bold = true }
 
             [segments.aws]
             force_display = false
             format = "$symbol$profile"
 
             [segments.git_status]
+            loading = "…"
             icons = { staged = "S", untracked = "U", stash = "T" }
-            "#,
+            style = { fg = "202", bg = "#102030" }
+            "##,
         )
         .expect("config should parse");
 
@@ -277,6 +363,8 @@ mod tests {
         let aws = config.segment("aws");
         let git_status = config.segment("git_status");
         assert_eq!(config.layout.lines, 1);
+        assert_eq!(config.layout.separator.as_deref(), Some(" | "));
+        assert_eq!(config.layout.separator(), " | ");
         assert_eq!(dir.icon.as_deref(), Some("d"));
         assert_eq!(dir.max_components, Some(2));
         assert_eq!(dir.ttl_ms, Some(5_000));
@@ -293,8 +381,11 @@ mod tests {
         assert_eq!(aws.force_display, Some(false));
         assert_eq!(aws.format.as_deref(), Some("$symbol$profile"));
         assert_eq!(duration.prefix.as_deref(), Some("took "));
-        assert_eq!(duration.prefix_style.fg.as_deref(), Some("cyan"));
+        assert_eq!(duration.prefix_style.fg.as_deref(), Some("#33ccff"));
         assert!(duration.prefix_style.bold);
+        assert_eq!(git_status.style.fg.as_deref(), Some("202"));
+        assert_eq!(git_status.style.bg.as_deref(), Some("#102030"));
+        assert_eq!(git_status.loading.as_deref(), Some("…"));
         assert_eq!(
             git_status.icons.get("staged").map(String::as_str),
             Some("S")
@@ -351,6 +442,44 @@ mod tests {
                 ConfigWarning::UnknownLayoutSegment {
                     location: "layout.line1.right".to_string(),
                     segment: "missing".to_string(),
+                }
+            ]
+        );
+    }
+
+    #[test]
+    fn warns_about_invalid_colors() {
+        let config = Config::from_toml(
+            r##"
+            [layout]
+            lines = 1
+
+            [layout.line1]
+            left = ["dir"]
+            right = []
+
+            [segments.dir]
+            style = { fg = "not-a-color", bg = "#12345g" }
+            error_style = { fg = "256" }
+            prefix_style = { bg = "#123456" }
+            "##,
+        )
+        .expect("config should parse");
+
+        assert_eq!(
+            config.warnings(),
+            [
+                ConfigWarning::InvalidColor {
+                    location: "segments.dir.style.fg".to_string(),
+                    color: "not-a-color".to_string(),
+                },
+                ConfigWarning::InvalidColor {
+                    location: "segments.dir.style.bg".to_string(),
+                    color: "#12345g".to_string(),
+                },
+                ConfigWarning::InvalidColor {
+                    location: "segments.dir.error_style.fg".to_string(),
+                    color: "256".to_string(),
                 }
             ]
         );

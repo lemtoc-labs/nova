@@ -524,6 +524,7 @@ error.
 ```toml
 [layout]
 lines = 2                       # 1 or 2
+separator = " "                 # inserted between rendered segments
 
 [layout.line1]
 left  = ["dir", "git_branch", "git_status", "rust_version"]
@@ -541,12 +542,16 @@ ttl_ms = 300000                 # per-segment override: [segments.<id>] ttl_ms
 [segments.dir]
 max_components = 4
 style = { fg = "blue", bold = true }
+# Colors accept the named 16-color set, ANSI 256-color indexes ("0".."255"),
+# or truecolor hex strings ("#RRGGBB"). Invalid colors are ignored during
+# lowering and reported as config warnings.
 
 [segments.git_branch]
 icon = ""                     # set to "" to hide the icon
 
 [segments.git_status]
 ttl_ms = 0
+loading = "…"                 # optional; omitted by default to avoid layout shift
 icons = { staged = "+", modified = "!", untracked = "?", stash = "$" } # "" hides an indicator
 
 [segments.rust_version]
