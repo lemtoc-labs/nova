@@ -937,6 +937,7 @@ fn aws_style(config: &SegmentConfig) -> Style {
 #[cfg(test)]
 mod tests {
     use std::fs;
+    use std::io::Write as _;
     use std::time::Duration;
 
     use crate::state::AwsEnv;
@@ -1779,7 +1780,11 @@ mod tests {
     #[cfg(unix)]
     fn write_script(dir: &Path, name: &str, body: &str) -> PathBuf {
         let path = dir.join(name);
-        fs::write(&path, format!("#!/bin/sh\n{body}")).expect("script should be written");
+        {
+            let mut file = fs::File::create(&path).expect("script should be created");
+            write!(file, "#!/bin/sh\n{body}").expect("script should be written");
+            file.sync_all().expect("script should be synced");
+        }
         let mut permissions = fs::metadata(&path)
             .expect("script metadata should be read")
             .permissions();
