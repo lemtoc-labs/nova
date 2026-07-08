@@ -108,6 +108,10 @@ ttl_ms = 0
 # min_loading_ms = 0
 # Optional placeholder while async data is still loading. Defaults to hidden.
 # loading = "…"
+# Optional separator between git status indicators. Defaults to "".
+# separator = ""
+# Whether to append counts to git status indicators. Defaults to false.
+# show_counts = false
 style = { fg = "red", bold = true }
 
 [segments.git_status.icons]

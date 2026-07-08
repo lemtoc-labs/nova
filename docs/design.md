@@ -563,6 +563,8 @@ icon = ""                     # set to "" to hide the icon
 ttl_ms = 0
 min_loading_ms = 300            # overrides [async].min_loading_ms for git
 loading = "…"                 # optional; omitted by default to avoid layout shift
+separator = ""                  # inserted between git status indicators
+show_counts = false             # append counts to git status indicators
 icons = { staged = "+", modified = "!", untracked = "?", stash = "$" } # "" hides an indicator
 
 [segments.rust_version]

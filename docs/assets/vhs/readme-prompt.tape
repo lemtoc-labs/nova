@@ -17,7 +17,7 @@ Enter
 Sleep 1s
 Type "export PATH=$NOVA_VHS_PROJECT/target/debug:$PATH"
 Enter
-Type "printf staged > .nova-vhs-status && git add .nova-vhs-status && printf modified >> .nova-vhs-status"
+Type "printf demo-stash >> README.md && git stash push -m nova-vhs-stash -- README.md && printf staged > .nova-vhs-status && git add .nova-vhs-status && printf modified >> .nova-vhs-status"
 Enter
 Type "cd ~"
 Enter

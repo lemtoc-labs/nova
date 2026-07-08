@@ -178,14 +178,14 @@ fn worker_sends_update_when_git_status_finishes() {
     let (first_status, first_output) = read_prompt_response(&mut response, 1);
     assert_eq!(first_status, RenderStatus::Partial);
     assert!(
-        !first_output.prompt.contains("[+1]"),
+        !first_output.prompt.contains("[+]"),
         "first render should not block on git status: {}",
         first_output.prompt
     );
 
     let update_output = read_update_output(&mut response, 1);
     assert!(update_output.prompt.contains("main"));
-    assert!(update_output.prompt.contains("[+1]"));
+    assert!(update_output.prompt.contains("[+]"));
 
     drop(request);
     drop(response);
@@ -1095,6 +1095,7 @@ fn worker_keeps_stale_git_status_after_refresh_failure() {
 
         [segments.git_status]
         ttl_ms = 0
+        show_counts = true
         "#,
     )
     .expect("config should be written");
