@@ -1,6 +1,6 @@
 # Nova README async prompt demo.
-Source assets/vhs/config.tape
-Output assets/vhs/readme-prompt.gif
+Source docs/assets/vhs/config.tape
+Output docs/assets/vhs/readme-prompt.gif
 Require nix
 
 Hide
@@ -10,7 +10,7 @@ Type "export TERM=xterm-256color COLORTERM=truecolor CLICOLOR=1 CLICOLOR_FORCE=1
 Enter
 Type "export NOVA_VHS_PROJECT=$PWD"
 Enter
-Type "export NOVA_CONFIG=$NOVA_VHS_PROJECT/assets/vhs/async-demo.toml"
+Type "export NOVA_CONFIG=$NOVA_VHS_PROJECT/docs/assets/vhs/async-demo.toml"
 Enter
 Type "nix develop -c cargo build -q"
 Enter
@@ -21,7 +21,7 @@ Type "export NOVA_VHS_REAL_GIT=$(command -v git)"
 Enter
 Type "export NOVA_VHS_REAL_RUSTC=$(command -v rustc)"
 Enter
-Type "export PATH=$NOVA_VHS_PROJECT/assets/vhs/bin:$PATH"
+Type "export PATH=$NOVA_VHS_PROJECT/docs/assets/vhs/bin:$PATH"
 Enter
 Type "cd ~"
 Enter

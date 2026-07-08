@@ -44,7 +44,7 @@ nix build .#nova --no-link
 Regenerate the README prompt recording:
 
 ```sh
-nix develop -c vhs assets/vhs/readme-prompt.tape
+nix develop -c vhs docs/assets/vhs/readme-prompt.tape
 ```
 
 ## Benchmarks

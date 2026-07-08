@@ -4,7 +4,7 @@ use std::path::Path;
 
 use crate::worker::protocol;
 
-const INIT_ZSH: &str = include_str!("../shell/init.zsh");
+const INIT_ZSH: &str = include_str!("shell/init.zsh");
 
 pub fn render_init_script(binary_path: &Path) -> String {
     INIT_ZSH
