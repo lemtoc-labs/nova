@@ -113,20 +113,20 @@ NOVA_ZSH_BENCH_ITERS=32 scripts/bench-zsh
 The sync-only config removed `git_*` and `*_version` segments from the default
 layout, leaving only synchronous prompt content.
 
-| checkpoint | metric | n | min | median | p95 | max |
-| --- | --- | ---: | ---: | ---: | ---: | ---: |
-| M-1 sync-only | `first_prompt_lag_ms` | 16 | 23.085 | 26.926 | 29.819 | 35.497 |
-| M-1 sync-only | `first_command_lag_ms` | 16 | 23.235 | 27.060 | 29.961 | 35.648 |
-| M-1 sync-only | `command_lag_ms` | 16 | 0.214 | 0.302 | 0.312 | 0.313 |
-| M-1 sync-only | `input_lag_ms` | 16 | 0.129 | 0.572 | 0.693 | 0.769 |
-| M-2 default | `first_prompt_lag_ms` | 16 | 25.092 | 27.096 | 30.579 | 38.396 |
-| M-2 default | `first_command_lag_ms` | 16 | 25.221 | 27.329 | 30.759 | 38.559 |
-| M-2 default | `command_lag_ms` | 16 | 0.339 | 0.396 | 0.411 | 0.417 |
-| M-2 default | `input_lag_ms` | 16 | 0.135 | 0.583 | 0.740 | 0.757 |
-| M-3 default, 32 iterations | `first_prompt_lag_ms` | 32 | 21.624 | 27.104 | 28.803 | 37.120 |
-| M-3 default, 32 iterations | `first_command_lag_ms` | 32 | 21.760 | 27.288 | 28.996 | 37.394 |
-| M-3 default, 32 iterations | `command_lag_ms` | 32 | 0.361 | 0.397 | 0.411 | 0.425 |
-| M-3 default, 32 iterations | `input_lag_ms` | 32 | 0.117 | 0.534 | 0.649 | 0.672 |
+| checkpoint                 | metric                 |   n |    min | median |    p95 |    max |
+| -------------------------- | ---------------------- | --: | -----: | -----: | -----: | -----: |
+| M-1 sync-only              | `first_prompt_lag_ms`  |  16 | 23.085 | 26.926 | 29.819 | 35.497 |
+| M-1 sync-only              | `first_command_lag_ms` |  16 | 23.235 | 27.060 | 29.961 | 35.648 |
+| M-1 sync-only              | `command_lag_ms`       |  16 |  0.214 |  0.302 |  0.312 |  0.313 |
+| M-1 sync-only              | `input_lag_ms`         |  16 |  0.129 |  0.572 |  0.693 |  0.769 |
+| M-2 default                | `first_prompt_lag_ms`  |  16 | 25.092 | 27.096 | 30.579 | 38.396 |
+| M-2 default                | `first_command_lag_ms` |  16 | 25.221 | 27.329 | 30.759 | 38.559 |
+| M-2 default                | `command_lag_ms`       |  16 |  0.339 |  0.396 |  0.411 |  0.417 |
+| M-2 default                | `input_lag_ms`         |  16 |  0.135 |  0.583 |  0.740 |  0.757 |
+| M-3 default, 32 iterations | `first_prompt_lag_ms`  |  32 | 21.624 | 27.104 | 28.803 | 37.120 |
+| M-3 default, 32 iterations | `first_command_lag_ms` |  32 | 21.760 | 27.288 | 28.996 | 37.394 |
+| M-3 default, 32 iterations | `command_lag_ms`       |  32 |  0.361 |  0.397 |  0.411 |  0.425 |
+| M-3 default, 32 iterations | `input_lag_ms`         |  32 |  0.117 |  0.534 |  0.649 |  0.672 |
 
 Interpretation:
 
@@ -142,16 +142,16 @@ Interpretation:
 After implementing PR-3 with the default `initial_wait_ms = 0`, the same default
 benchmark stayed in the same range:
 
-| checkpoint | metric | n | min | median | p95 | max |
-| --- | --- | ---: | ---: | ---: | ---: | ---: |
-| PR-3 default after | `first_prompt_lag_ms` | 16 | 26.051 | 27.485 | 30.008 | 35.082 |
-| PR-3 default after | `first_command_lag_ms` | 16 | 26.315 | 27.744 | 30.264 | 35.309 |
-| PR-3 default after | `command_lag_ms` | 16 | 0.371 | 0.400 | 0.424 | 0.424 |
-| PR-3 default after | `input_lag_ms` | 16 | 0.229 | 0.538 | 0.690 | 0.713 |
-| PR-3 `initial_wait_ms = 10` smoke | `first_prompt_lag_ms` | 4 | 27.159 | 27.284 | 36.794 | 38.453 |
-| PR-3 `initial_wait_ms = 10` smoke | `first_command_lag_ms` | 4 | 27.365 | 27.450 | 36.950 | 38.613 |
-| PR-3 `initial_wait_ms = 10` smoke | `command_lag_ms` | 4 | 0.398 | 0.411 | 0.415 | 0.415 |
-| PR-3 `initial_wait_ms = 10` smoke | `input_lag_ms` | 4 | 0.188 | 0.336 | 0.496 | 0.501 |
+| checkpoint                        | metric                 |   n |    min | median |    p95 |    max |
+| --------------------------------- | ---------------------- | --: | -----: | -----: | -----: | -----: |
+| PR-3 default after                | `first_prompt_lag_ms`  |  16 | 26.051 | 27.485 | 30.008 | 35.082 |
+| PR-3 default after                | `first_command_lag_ms` |  16 | 26.315 | 27.744 | 30.264 | 35.309 |
+| PR-3 default after                | `command_lag_ms`       |  16 |  0.371 |  0.400 |  0.424 |  0.424 |
+| PR-3 default after                | `input_lag_ms`         |  16 |  0.229 |  0.538 |  0.690 |  0.713 |
+| PR-3 `initial_wait_ms = 10` smoke | `first_prompt_lag_ms`  |   4 | 27.159 | 27.284 | 36.794 | 38.453 |
+| PR-3 `initial_wait_ms = 10` smoke | `first_command_lag_ms` |   4 | 27.365 | 27.450 | 36.950 | 38.613 |
+| PR-3 `initial_wait_ms = 10` smoke | `command_lag_ms`       |   4 |  0.398 |  0.411 |  0.415 |  0.415 |
+| PR-3 `initial_wait_ms = 10` smoke | `input_lag_ms`         |   4 |  0.188 |  0.336 |  0.496 |  0.501 |
 
 ### 2026-07-08: PR-4 Initial Wait Default Decision
 
@@ -178,32 +178,32 @@ PATH=/private/tmp/nova-pr4-bench/bin:$PATH NOVA_CONFIG=/private/tmp/nova-pr4-ben
 The slow-git condition prepended a wrapper that delayed only Nova's
 `git --no-optional-locks status ...` collector command by 30 ms.
 
-| condition | wait | metric | n | min | median | p95 | max |
-| --- | ---: | --- | ---: | ---: | ---: | ---: | ---: |
-| normal | 0 | `first_prompt_lag_ms` | 16 | 25.915 | 27.259 | 29.734 | 34.978 |
-| normal | 0 | `command_lag_ms` | 16 | 0.375 | 0.414 | 0.432 | 0.434 |
-| normal | 0 | `input_lag_ms` | 16 | 0.180 | 0.581 | 0.690 | 0.702 |
-| normal | 10 | `first_prompt_lag_ms` | 16 | 25.823 | 27.216 | 30.385 | 38.080 |
-| normal | 10 | `command_lag_ms` | 16 | 0.336 | 0.384 | 0.428 | 0.434 |
-| normal | 10 | `input_lag_ms` | 16 | 0.118 | 0.426 | 0.632 | 0.687 |
-| normal | 20 | `first_prompt_lag_ms` | 16 | 39.154 | 39.959 | 48.773 | 50.833 |
-| normal | 20 | `command_lag_ms` | 16 | 0.391 | 0.426 | 0.448 | 0.479 |
-| normal | 20 | `input_lag_ms` | 16 | 0.404 | 0.617 | 0.682 | 0.704 |
-| normal | 40 | `first_prompt_lag_ms` | 16 | 32.811 | 39.521 | 42.196 | 42.647 |
-| normal | 40 | `command_lag_ms` | 16 | 0.344 | 0.417 | 0.430 | 0.430 |
-| normal | 40 | `input_lag_ms` | 16 | 0.165 | 0.559 | 0.707 | 0.710 |
-| slow git | 0 | `first_prompt_lag_ms` | 16 | 26.626 | 27.467 | 29.858 | 35.292 |
-| slow git | 0 | `command_lag_ms` | 16 | 0.304 | 0.372 | 0.385 | 0.385 |
-| slow git | 0 | `input_lag_ms` | 16 | 0.157 | 0.260 | 0.394 | 0.490 |
-| slow git | 10 | `first_prompt_lag_ms` | 16 | 22.616 | 27.359 | 30.417 | 36.163 |
-| slow git | 10 | `command_lag_ms` | 16 | 0.344 | 0.379 | 0.393 | 0.394 |
-| slow git | 10 | `input_lag_ms` | 16 | 0.202 | 0.250 | 0.451 | 0.550 |
-| slow git | 20 | `first_prompt_lag_ms` | 16 | 39.775 | 42.062 | 45.995 | 51.193 |
-| slow git | 20 | `command_lag_ms` | 16 | 0.329 | 0.374 | 0.382 | 0.386 |
-| slow git | 20 | `input_lag_ms` | 16 | 0.124 | 0.262 | 0.432 | 0.728 |
-| slow git | 40 | `first_prompt_lag_ms` | 16 | 58.147 | 67.072 | 70.684 | 75.085 |
-| slow git | 40 | `command_lag_ms` | 16 | 0.325 | 0.374 | 0.393 | 0.398 |
-| slow git | 40 | `input_lag_ms` | 16 | 0.187 | 0.239 | 0.462 | 0.646 |
+| condition | wait | metric                |   n |    min | median |    p95 |    max |
+| --------- | ---: | --------------------- | --: | -----: | -----: | -----: | -----: |
+| normal    |    0 | `first_prompt_lag_ms` |  16 | 25.915 | 27.259 | 29.734 | 34.978 |
+| normal    |    0 | `command_lag_ms`      |  16 |  0.375 |  0.414 |  0.432 |  0.434 |
+| normal    |    0 | `input_lag_ms`        |  16 |  0.180 |  0.581 |  0.690 |  0.702 |
+| normal    |   10 | `first_prompt_lag_ms` |  16 | 25.823 | 27.216 | 30.385 | 38.080 |
+| normal    |   10 | `command_lag_ms`      |  16 |  0.336 |  0.384 |  0.428 |  0.434 |
+| normal    |   10 | `input_lag_ms`        |  16 |  0.118 |  0.426 |  0.632 |  0.687 |
+| normal    |   20 | `first_prompt_lag_ms` |  16 | 39.154 | 39.959 | 48.773 | 50.833 |
+| normal    |   20 | `command_lag_ms`      |  16 |  0.391 |  0.426 |  0.448 |  0.479 |
+| normal    |   20 | `input_lag_ms`        |  16 |  0.404 |  0.617 |  0.682 |  0.704 |
+| normal    |   40 | `first_prompt_lag_ms` |  16 | 32.811 | 39.521 | 42.196 | 42.647 |
+| normal    |   40 | `command_lag_ms`      |  16 |  0.344 |  0.417 |  0.430 |  0.430 |
+| normal    |   40 | `input_lag_ms`        |  16 |  0.165 |  0.559 |  0.707 |  0.710 |
+| slow git  |    0 | `first_prompt_lag_ms` |  16 | 26.626 | 27.467 | 29.858 | 35.292 |
+| slow git  |    0 | `command_lag_ms`      |  16 |  0.304 |  0.372 |  0.385 |  0.385 |
+| slow git  |    0 | `input_lag_ms`        |  16 |  0.157 |  0.260 |  0.394 |  0.490 |
+| slow git  |   10 | `first_prompt_lag_ms` |  16 | 22.616 | 27.359 | 30.417 | 36.163 |
+| slow git  |   10 | `command_lag_ms`      |  16 |  0.344 |  0.379 |  0.393 |  0.394 |
+| slow git  |   10 | `input_lag_ms`        |  16 |  0.202 |  0.250 |  0.451 |  0.550 |
+| slow git  |   20 | `first_prompt_lag_ms` |  16 | 39.775 | 42.062 | 45.995 | 51.193 |
+| slow git  |   20 | `command_lag_ms`      |  16 |  0.329 |  0.374 |  0.382 |  0.386 |
+| slow git  |   20 | `input_lag_ms`        |  16 |  0.124 |  0.262 |  0.432 |  0.728 |
+| slow git  |   40 | `first_prompt_lag_ms` |  16 | 58.147 | 67.072 | 70.684 | 75.085 |
+| slow git  |   40 | `command_lag_ms`      |  16 |  0.325 |  0.374 |  0.393 |  0.398 |
+| slow git  |   40 | `input_lag_ms`        |  16 |  0.187 |  0.239 |  0.462 |  0.646 |
 
 Decision:
 
@@ -229,12 +229,12 @@ Commands:
 scripts/bench-zsh
 ```
 
-| checkpoint | metric | n | min | median | p95 | max |
-| --- | --- | ---: | ---: | ---: | ---: | ---: |
-| PR-5 eager spawn | `first_prompt_lag_ms` | 16 | 25.166 | 28.545 | 37.943 | 37.943 |
-| PR-5 eager spawn | `first_command_lag_ms` | 16 | 25.307 | 28.676 | 38.125 | 38.125 |
-| PR-5 eager spawn | `command_lag_ms` | 16 | 0.381 | 0.463 | 0.495 | 0.495 |
-| PR-5 eager spawn | `input_lag_ms` | 16 | 0.130 | 0.555 | 0.759 | 0.759 |
+| checkpoint       | metric                 |   n |    min | median |    p95 |    max |
+| ---------------- | ---------------------- | --: | -----: | -----: | -----: | -----: |
+| PR-5 eager spawn | `first_prompt_lag_ms`  |  16 | 25.166 | 28.545 | 37.943 | 37.943 |
+| PR-5 eager spawn | `first_command_lag_ms` |  16 | 25.307 | 28.676 | 38.125 | 38.125 |
+| PR-5 eager spawn | `command_lag_ms`       |  16 |  0.381 |  0.463 |  0.495 |  0.495 |
+| PR-5 eager spawn | `input_lag_ms`         |  16 |  0.130 |  0.555 |  0.759 |  0.759 |
 
 Interpretation:
 

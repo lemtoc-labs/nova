@@ -22,20 +22,20 @@ Guiding constraints:
 Previously open questions are now decided. Rationale appears in the linked
 sections.
 
-| Topic                        | Decision                                                                                        | Section                 |
-| ---------------------------- | ----------------------------------------------------------------------------------------------- | ----------------------- |
-| CLI binary                   | Yes. One binary: `nova init zsh`, `nova worker`, `nova prompt`, `nova check`                    | Binary and Crate Layout |
-| zsh ↔ worker transport       | FIFO pair + disowned background process, **not** `coproc`; zsh side opens nonblocking + cloexec | Transport               |
-| Wire protocol                | Versioned, control-character framed records, **not** JSON                                       | Protocol                |
-| Async runtime                | None. `std::thread` + `std::sync::mpsc`                                                         | Slow Path               |
-| Git backend                  | `git` subprocess in the async path, no libgit2/gix                                              | Slow Path               |
-| Worker startup               | Eager spawn during `nova init zsh`; FIFO fds opened lazily on first `precmd`                    | Process Model           |
+| Topic                        | Decision                                                                                          | Section                 |
+| ---------------------------- | ------------------------------------------------------------------------------------------------- | ----------------------- |
+| CLI binary                   | Yes. One binary: `nova init zsh`, `nova worker`, `nova prompt`, `nova check`                      | Binary and Crate Layout |
+| zsh ↔ worker transport       | FIFO pair + disowned background process, **not** `coproc`; zsh side opens nonblocking + cloexec   | Transport               |
+| Wire protocol                | Versioned, control-character framed records, **not** JSON                                         | Protocol                |
+| Async runtime                | None. `std::thread` + `std::sync::mpsc`                                                           | Slow Path               |
+| Git backend                  | `git` subprocess in the async path, no libgit2/gix                                                | Slow Path               |
+| Worker startup               | Eager spawn during `nova init zsh`; FIFO fds opened lazily on first `precmd`                      | Process Model           |
 | Initial render wait          | zsh waits ≤ 50 ms for the first reply, then optionally waits for `final` within `initial_wait_ms` | zsh Adapter             |
-| Disk cache                   | Deferred until measurements justify it                                                          | Cache                   |
-| Minimum zsh                  | 5.8                                                                                             | zsh Adapter             |
-| Default segments             | `dir`, `git_branch`, `git_status`, `rust_version`, `duration`, `prompt_char`                    | Configuration           |
-| Worker sharing across shells | No                                                                                              | Process Model           |
-| Rust toolchain               | Latest stable, edition 2024, `#![forbid(unsafe_code)]`                                          | Testing Strategy        |
+| Disk cache                   | Deferred until measurements justify it                                                            | Cache                   |
+| Minimum zsh                  | 5.8                                                                                               | zsh Adapter             |
+| Default segments             | `dir`, `git_branch`, `git_status`, `rust_version`, `duration`, `prompt_char`                      | Configuration           |
+| Worker sharing across shells | No                                                                                                | Process Model           |
+| Rust toolchain               | Latest stable, edition 2024, `#![forbid(unsafe_code)]`                                            | Testing Strategy        |
 
 ## High-Level Flow
 
@@ -44,7 +44,7 @@ zsh session
   |
   | eval "$(nova init zsh)"          # emits adapter script, spawns worker (&!)
   v
-zsh adapter (shell/init.zsh)
+zsh adapter (src/shell/init.zsh)
   |
   | two FIFOs in ${XDG_RUNTIME_DIR:-$TMPDIR}/nova-<pid>/
   v
@@ -274,10 +274,10 @@ nova/
 │   │   ├── mod.rs         # event loop (single mpsc receiver, enum Event)
 │   │   ├── protocol.rs    # frame encode/decode, shared with tests
 │   │   └── jobs.rs        # bounded thread pool, deadlines, supersession
-│   ├── zsh_init.rs        # embeds shell/init.zsh via include_str!
+│   ├── shell/
+│   │   └── init.zsh       # the zsh adapter
+│   ├── zsh_init.rs        # embeds src/shell/init.zsh via include_str!
 │   └── main.rs            # subcommands: init | worker | prompt | check
-└── shell/
-    └── init.zsh           # the zsh adapter
 ```
 
 Layering rules (enforced by review, testable by imports):
@@ -285,7 +285,7 @@ Layering rules (enforced by review, testable by imports):
 - `render`, `segments`, `config`, `state`, `cache` know nothing about FIFOs,
   processes, or zsh lifecycles. They are pure enough to unit-test directly.
 - `worker` knows the protocol and the pipeline but contains no rendering rules.
-- `shell/init.zsh` contains no rendering, git, or cache logic.
+- `src/shell/init.zsh` contains no rendering, git, or cache logic.
 
 Dependency policy — allowed: `serde`, `toml`, `unicode-width`, `thiserror`,
 `wait-timeout` (tiny; child-process timeouts), `libc` (only for the

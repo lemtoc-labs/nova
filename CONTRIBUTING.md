@@ -41,6 +41,12 @@ dist plan
 nix build .#nova --no-link
 ```
 
+Regenerate the README prompt recording:
+
+```sh
+nix develop -c vhs docs/assets/vhs/readme-prompt.tape
+```
+
 ## Benchmarks
 
 Build the release binary first:

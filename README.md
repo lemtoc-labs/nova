@@ -4,6 +4,8 @@
 
 Nova is a fast, customizable zsh prompt renderer written in Rust.
 
+![Nova prompt demo](docs/assets/vhs/readme-prompt.gif)
+
 It keeps the prompt's blocking path small and collects slower data, such as Git
 status and runtime versions, through a per-shell worker process. zsh is the
 primary shell target.
