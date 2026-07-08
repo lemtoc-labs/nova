@@ -670,6 +670,14 @@ mod tests {
     }
 
     #[test]
+    fn segment_min_loading_uses_builtin_default() {
+        assert_eq!(
+            segment_min_loading(&Config::default(), &SegmentConfig::default()),
+            Duration::from_millis(DEFAULT_MIN_LOADING_MS)
+        );
+    }
+
+    #[test]
     fn segment_min_loading_prefers_segment_config() {
         let config = Config {
             async_config: crate::config::AsyncConfig {

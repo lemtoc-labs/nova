@@ -549,7 +549,7 @@ left  = ["prompt_char"]
 
 [async]
 initial_wait_ms = 0             # extra final wait budget after the first partial reply
-min_loading_ms = 0              # global cache-miss async update floor
+min_loading_ms = 50             # global cache-miss async update floor
 max_concurrency = 2
 timeout_ms = 1000               # per-segment override: [segments.<id>] timeout_ms
 ttl_ms = 300000                 # per-segment override: [segments.<id>] ttl_ms
@@ -585,7 +585,7 @@ min_ms = 2000                   # hide below this
 stable sub-millisecond input lag at `0`, while larger waits increased first
 prompt lag without improving command or input lag.
 
-`min_loading_ms` also defaults to `0`. It only applies to cache-miss async
+`min_loading_ms` defaults to `50`. It only applies to cache-miss async
 refreshes: collection starts immediately, but an update that finishes before
 the configured floor is held until that floor. If collection takes longer than
 the floor, the update is emitted as soon as it finishes. Segment-level
