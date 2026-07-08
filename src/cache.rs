@@ -89,6 +89,10 @@ impl SegmentCache {
         }
     }
 
+    pub fn has_entry(&self, key: &CacheKey) -> bool {
+        self.entries.contains_key(key)
+    }
+
     pub fn mark_inflight(&mut self, key: CacheKey) -> bool {
         self.inflight.insert(key)
     }
@@ -194,6 +198,33 @@ mod tests {
             cache.lookup(&key("/repo"), now, Duration::from_secs(1)),
             AsyncValue::Loading
         );
+    }
+
+    #[test]
+    fn has_entry_returns_false_for_missing_entry() {
+        let cache = SegmentCache::new(2);
+
+        assert!(!cache.has_entry(&key("/repo")));
+    }
+
+    #[test]
+    fn has_entry_returns_true_for_cached_success() {
+        let mut cache = SegmentCache::new(2);
+        let now = Instant::now();
+        let key = key("/repo");
+        cache.complete_success(key.clone(), Some(segment("*")), now);
+
+        assert!(cache.has_entry(&key));
+    }
+
+    #[test]
+    fn has_entry_returns_true_for_cached_failure() {
+        let mut cache = SegmentCache::new(2);
+        let now = Instant::now();
+        let key = key("/repo");
+        cache.complete_failure(key.clone(), now);
+
+        assert!(cache.has_entry(&key));
     }
 
     #[test]
