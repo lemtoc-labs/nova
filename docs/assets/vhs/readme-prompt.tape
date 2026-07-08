@@ -17,15 +17,9 @@ Enter
 Sleep 1s
 Type "export PATH=$NOVA_VHS_PROJECT/target/debug:$PATH"
 Enter
-Type "export NOVA_VHS_REAL_GIT=$(command -v git)"
-Enter
-Type "export NOVA_VHS_REAL_RUSTC=$(command -v rustc)"
-Enter
-Type "export PATH=$NOVA_VHS_PROJECT/docs/assets/vhs/bin:$PATH"
+Type "printf staged > .nova-vhs-status && git add .nova-vhs-status && printf modified >> .nova-vhs-status"
 Enter
 Type "cd ~"
-Enter
-Type "chpwd() { if [[ $PWD == $NOVA_VHS_PROJECT ]]; then export IN_NIX_SHELL=impure name=nix-shell-env NIX_SHELL_LEVEL=1; else unset IN_NIX_SHELL name NIX_SHELL_LEVEL; fi }"
 Enter
 Type "nova init zsh > /tmp/nova-init.zsh"
 Enter
@@ -41,7 +35,7 @@ Sleep 1s
 Type "cd dev/oss/nova"
 Sleep 0.25s
 Enter
-Sleep 3s
+Sleep 2s
 Type "false"
 Sleep 0.25s
 Enter
