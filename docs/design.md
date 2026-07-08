@@ -263,7 +263,7 @@ nova/
 │   │   ├── prompt_char.rs # sync (exit status + keymap aware)
 │   │   ├── duration.rs    # sync
 │   │   ├── ssh.rs         # sync
-│   │   ├── git.rs         # async: branch + status via git subprocess
+│   │   ├── git.rs         # async: branch and status via separate git subprocesses
 │   │   └── runtime.rs     # async: node/rust/python/... via markers then commands
 │   ├── render/
 │   │   ├── mod.rs         # compose RenderedPrompt from state + config + cache
@@ -430,11 +430,16 @@ Request-scoped command lookup environment:
 
 Git collection (rail):
 
-- One subprocess per refresh:
+- `git_branch` and `git_status` are separate async segments and cache entries.
+  `git_branch` is intentionally cheap:
+  `git --no-optional-locks symbolic-ref --quiet --short HEAD`, with
+  `git --no-optional-locks rev-parse --short HEAD` as the detached-HEAD
+  fallback.
+- `git_status` uses one subprocess per refresh:
   `git --no-optional-locks status --porcelain=v2 --branch --show-stash -z`
-  yields branch, upstream, ahead/behind, staged/unstaged/untracked/conflicts,
-  and the stash count (`# stash <N>` header) in a single parse. On git older
-  than 2.35 the stash header is absent; treat that as 0.
+  yields upstream, ahead/behind, staged/unstaged/untracked/conflicts, and the
+  stash count (`# stash <N>` header) in a single parse. On git older than 2.35
+  the stash header is absent; treat that as 0.
 - **Nova never reads files under `.git` directly.** Repository internals vary
   too much across layouts — in worktrees and submodules `.git` is a file
   containing `gitdir: ...`, and shared refs/logs live under the common git
@@ -458,10 +463,10 @@ Owned by the worker. One layer for now.
   a refresh job runs.
 - **Inflight set**: a `HashSet<CacheKey>` prevents duplicate concurrent jobs
   for the same key.
-- TTLs are per segment: `git_status` defaults to `ttl_ms = 0` (serve cached
-  immediately, always revalidate in the background after each prompt — the
-  user may have just committed), runtime versions default to `ttl_ms =
-300_000`.
+- TTLs are per segment: `git_branch` and `git_status` default to `ttl_ms = 0`
+  (serve cached immediately, always revalidate in the background after each
+  prompt — the user may have just committed or checked out a branch), runtime
+  versions default to `ttl_ms = 300_000`.
 - Invalidation: config reload bumps the generation, which changes every key.
 
 Disk cache stays deferred. If measurements later justify it (cold-start UX),
@@ -544,7 +549,7 @@ left  = ["prompt_char"]
 
 [async]
 initial_wait_ms = 0             # extra final wait budget after the first partial reply
-min_loading_ms = 0              # global cache-miss async update floor
+min_loading_ms = 50             # global cache-miss async update floor
 max_concurrency = 2
 timeout_ms = 1000               # per-segment override: [segments.<id>] timeout_ms
 ttl_ms = 300000                 # per-segment override: [segments.<id>] ttl_ms
@@ -561,7 +566,7 @@ icon = ""                     # set to "" to hide the icon
 
 [segments.git_status]
 ttl_ms = 0
-min_loading_ms = 300            # overrides [async].min_loading_ms for git
+min_loading_ms = 300            # overrides [async].min_loading_ms for git_status
 loading = "…"                 # optional; omitted by default to avoid layout shift
 separator = ""                  # inserted between git status indicators
 show_counts = false             # append counts to git status indicators
@@ -580,7 +585,7 @@ min_ms = 2000                   # hide below this
 stable sub-millisecond input lag at `0`, while larger waits increased first
 prompt lag without improving command or input lag.
 
-`min_loading_ms` also defaults to `0`. It only applies to cache-miss async
+`min_loading_ms` defaults to `50`. It only applies to cache-miss async
 refreshes: collection starts immediately, but an update that finishes before
 the configured floor is held until that floor. If collection takes longer than
 the floor, the update is emitted as soon as it finishes. Segment-level

@@ -20,7 +20,16 @@ const GIT_BRANCH_SEGMENT_ID: &str = "git_branch";
 const GIT_BRANCH_ICON: &str = "";
 const GIT_STATUS_SEGMENT_ID: &str = "git_status";
 const DEFAULT_GIT_STATUS_SEPARATOR: &str = "";
-const GIT_RENDER_IDS: &[&str] = &[GIT_BRANCH_SEGMENT_ID, GIT_STATUS_SEGMENT_ID];
+const GIT_BRANCH_RENDER_IDS: &[&str] = &[GIT_BRANCH_SEGMENT_ID];
+const GIT_STATUS_RENDER_IDS: &[&str] = &[GIT_STATUS_SEGMENT_ID];
+const GIT_BRANCH_ARGS: &[&str] = &[
+    "--no-optional-locks",
+    "symbolic-ref",
+    "--quiet",
+    "--short",
+    "HEAD",
+];
+const GIT_DETACHED_HEAD_ARGS: &[&str] = &["--no-optional-locks", "rev-parse", "--short", "HEAD"];
 const GIT_STATUS_ARGS: &[&str] = &[
     "--no-optional-locks",
     "status",
@@ -31,9 +40,13 @@ const GIT_STATUS_ARGS: &[&str] = &[
 ];
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct GitStatus {
+pub struct GitBranch {
     pub branch: Option<String>,
     pub head_oid: Option<String>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct GitStatus {
     pub staged: usize,
     pub modified: usize,
     pub untracked: usize,
@@ -55,11 +68,75 @@ impl GitStatus {
     }
 }
 
-pub struct GitSegment;
+pub struct GitBranchSegment;
 
-impl AsyncSegmentSpec for GitSegment {
+impl AsyncSegmentSpec for GitBranchSegment {
     fn render_ids(&self) -> &'static [&'static str] {
-        GIT_RENDER_IDS
+        GIT_BRANCH_RENDER_IDS
+    }
+
+    fn primary_id(&self) -> &'static str {
+        GIT_BRANCH_SEGMENT_ID
+    }
+
+    fn cache_key(
+        &self,
+        render_id: &str,
+        state: &crate::state::PromptState,
+        config_generation: u64,
+    ) -> Option<CacheKey> {
+        match render_id {
+            GIT_BRANCH_SEGMENT_ID => {
+                git_cache_key(GIT_BRANCH_SEGMENT_ID, &state.cwd, config_generation)
+            }
+            _ => None,
+        }
+    }
+
+    fn collect(&self, ctx: &CollectContext<'_>) -> Vec<AsyncJobSegment> {
+        let Some(branch_key) =
+            self.cache_key(GIT_BRANCH_SEGMENT_ID, ctx.state, ctx.config_generation)
+        else {
+            return Vec::new();
+        };
+        let branch_config = ctx.config.segment(GIT_BRANCH_SEGMENT_ID);
+
+        let branch = match collect_git_branch(&ctx.state.cwd, ctx.deadline) {
+            Ok(Some(branch)) => branch,
+            Ok(None) => {
+                return vec![AsyncJobSegment {
+                    key: branch_key,
+                    content: Ok(None),
+                }];
+            }
+            Err(_error) => {
+                return vec![AsyncJobSegment {
+                    key: branch_key,
+                    content: Err(AsyncSegmentFailure::Failed),
+                }];
+            }
+        };
+
+        vec![AsyncJobSegment {
+            key: branch_key,
+            content: Ok(render_git_branch(&branch, branch_config)),
+        }]
+    }
+
+    fn default_ttl(&self) -> Duration {
+        Duration::ZERO
+    }
+
+    fn default_timeout(&self) -> Duration {
+        Duration::from_secs(1)
+    }
+}
+
+pub struct GitStatusSegment;
+
+impl AsyncSegmentSpec for GitStatusSegment {
+    fn render_ids(&self) -> &'static [&'static str] {
+        GIT_STATUS_RENDER_IDS
     }
 
     fn primary_id(&self) -> &'static str {
@@ -72,10 +149,10 @@ impl AsyncSegmentSpec for GitSegment {
         state: &crate::state::PromptState,
         config_generation: u64,
     ) -> Option<CacheKey> {
-        let status_key = git_cache_key(&state.cwd, config_generation)?;
         match render_id {
-            GIT_BRANCH_SEGMENT_ID => Some(git_branch_key_from_status_key(&status_key)),
-            GIT_STATUS_SEGMENT_ID => Some(status_key),
+            GIT_STATUS_SEGMENT_ID => {
+                git_cache_key(GIT_STATUS_SEGMENT_ID, &state.cwd, config_generation)
+            }
             _ => None,
         }
     }
@@ -86,48 +163,28 @@ impl AsyncSegmentSpec for GitSegment {
         else {
             return Vec::new();
         };
-        let branch_key = git_branch_key_from_status_key(&status_key);
-        let branch_config = ctx.config.segment(GIT_BRANCH_SEGMENT_ID);
         let status_config = ctx.config.segment(GIT_STATUS_SEGMENT_ID);
 
         let status = match collect_git_status(&ctx.state.cwd, ctx.deadline) {
             Ok(Some(status)) => status,
             Ok(None) => {
-                return vec![
-                    AsyncJobSegment {
-                        key: branch_key,
-                        content: Ok(None),
-                    },
-                    AsyncJobSegment {
-                        key: status_key,
-                        content: Ok(None),
-                    },
-                ];
+                return vec![AsyncJobSegment {
+                    key: status_key,
+                    content: Ok(None),
+                }];
             }
             Err(_error) => {
-                return vec![
-                    AsyncJobSegment {
-                        key: branch_key,
-                        content: Err(AsyncSegmentFailure::Failed),
-                    },
-                    AsyncJobSegment {
-                        key: status_key,
-                        content: Err(AsyncSegmentFailure::Failed),
-                    },
-                ];
+                return vec![AsyncJobSegment {
+                    key: status_key,
+                    content: Err(AsyncSegmentFailure::Failed),
+                }];
             }
         };
 
-        vec![
-            AsyncJobSegment {
-                key: branch_key,
-                content: Ok(render_git_branch(&status, branch_config)),
-            },
-            AsyncJobSegment {
-                key: status_key,
-                content: Ok(render_git_status(&status, status_config)),
-            },
-        ]
+        vec![AsyncJobSegment {
+            key: status_key,
+            content: Ok(render_git_status(&status, status_config)),
+        }]
     }
 
     fn default_ttl(&self) -> Duration {
@@ -139,11 +196,11 @@ impl AsyncSegmentSpec for GitSegment {
     }
 }
 
-pub fn render_git_branch(status: &GitStatus, config: &SegmentConfig) -> Option<SegmentContent> {
-    let branch = status
+pub fn render_git_branch(branch: &GitBranch, config: &SegmentConfig) -> Option<SegmentContent> {
+    let branch = branch
         .branch
         .clone()
-        .or_else(|| status.head_oid.as_deref().map(detached_head_label))?;
+        .or_else(|| branch.head_oid.as_deref().map(detached_head_label))?;
     let text = label_with_icon(&branch, config, GIT_BRANCH_ICON);
 
     Some(SegmentContent::new(
@@ -164,37 +221,37 @@ pub fn render_git_status(status: &GitStatus, config: &SegmentConfig) -> Option<S
 
 #[derive(Debug, Error)]
 pub enum GitCollectError {
-    #[error("git status timed out")]
+    #[error("git command timed out")]
     TimedOut,
-    #[error("failed to spawn git status: {0}")]
+    #[error("failed to spawn git command: {0}")]
     Spawn(std::io::Error),
-    #[error("failed to wait for git status: {0}")]
+    #[error("failed to wait for git command: {0}")]
     Wait(std::io::Error),
-    #[error("failed to read git status output: {0}")]
+    #[error("failed to read git command output: {0}")]
     ReadOutput(std::io::Error),
-    #[error("git status output reader panicked")]
+    #[error("git command output reader panicked")]
     ReaderPanicked,
-    #[error("failed to capture git status output")]
+    #[error("failed to capture git command output")]
     MissingStdout,
-    #[error("git status exited unsuccessfully")]
+    #[error("git command exited unsuccessfully")]
     NonZeroExit,
 }
 
-pub fn git_cache_key(cwd: &Path, config_generation: u64) -> Option<CacheKey> {
+fn git_cache_key(segment_id: &str, cwd: &Path, config_generation: u64) -> Option<CacheKey> {
     let root = find_repository_root(cwd)?;
     Some(CacheKey::new(
-        GIT_STATUS_SEGMENT_ID,
+        segment_id,
         root.to_string_lossy(),
         config_generation,
     ))
 }
 
-fn git_branch_key_from_status_key(status_key: &CacheKey) -> CacheKey {
-    CacheKey::new(
-        GIT_BRANCH_SEGMENT_ID,
-        status_key.source.clone(),
-        status_key.config_generation,
-    )
+pub fn git_branch_cache_key(cwd: &Path, config_generation: u64) -> Option<CacheKey> {
+    git_cache_key(GIT_BRANCH_SEGMENT_ID, cwd, config_generation)
+}
+
+pub fn git_status_cache_key(cwd: &Path, config_generation: u64) -> Option<CacheKey> {
+    git_cache_key(GIT_STATUS_SEGMENT_ID, cwd, config_generation)
 }
 
 pub fn find_repository_root(cwd: &Path) -> Option<PathBuf> {
@@ -207,6 +264,61 @@ pub fn find_repository_root(cwd: &Path) -> Option<PathBuf> {
         }
 
         current = current.parent()?;
+    }
+}
+
+pub fn collect_git_branch(
+    cwd: &Path,
+    deadline: Instant,
+) -> Result<Option<GitBranch>, GitCollectError> {
+    collect_git_branch_with_command(cwd, deadline, Path::new("git"))
+}
+
+fn collect_git_branch_with_command(
+    cwd: &Path,
+    deadline: Instant,
+    command: &Path,
+) -> Result<Option<GitBranch>, GitCollectError> {
+    if find_repository_root(cwd).is_none() {
+        return Ok(None);
+    }
+
+    let branch_output = match run_git_command(cwd, deadline, command, GIT_BRANCH_ARGS)? {
+        GitCommandOutput::Success(output) => output,
+        GitCommandOutput::NonZeroExit => {
+            return collect_detached_git_branch_with_command(cwd, deadline, command);
+        }
+    };
+    let branch = trimmed_stdout(&branch_output);
+
+    if branch.is_empty() {
+        Ok(None)
+    } else {
+        Ok(Some(GitBranch {
+            branch: Some(branch),
+            head_oid: None,
+        }))
+    }
+}
+
+fn collect_detached_git_branch_with_command(
+    cwd: &Path,
+    deadline: Instant,
+    command: &Path,
+) -> Result<Option<GitBranch>, GitCollectError> {
+    let output = match run_git_command(cwd, deadline, command, GIT_DETACHED_HEAD_ARGS)? {
+        GitCommandOutput::Success(output) => output,
+        GitCommandOutput::NonZeroExit => return Ok(None),
+    };
+    let head_oid = trimmed_stdout(&output);
+
+    if head_oid.is_empty() {
+        Ok(None)
+    } else {
+        Ok(Some(GitBranch {
+            branch: None,
+            head_oid: Some(head_oid),
+        }))
     }
 }
 
@@ -226,9 +338,26 @@ fn collect_git_status_with_command(
         return Ok(None);
     }
 
+    match run_git_command(cwd, deadline, command, GIT_STATUS_ARGS)? {
+        GitCommandOutput::Success(output) => Ok(Some(parse_porcelain_v2_z(&output))),
+        GitCommandOutput::NonZeroExit => Err(GitCollectError::NonZeroExit),
+    }
+}
+
+enum GitCommandOutput {
+    Success(Vec<u8>),
+    NonZeroExit,
+}
+
+fn run_git_command(
+    cwd: &Path,
+    deadline: Instant,
+    command: &Path,
+    args: &[&str],
+) -> Result<GitCommandOutput, GitCollectError> {
     let timeout = remaining_time(deadline)?;
     let mut child = Command::new(command)
-        .args(GIT_STATUS_ARGS)
+        .args(args)
         .current_dir(cwd)
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
@@ -249,10 +378,14 @@ fn collect_git_status_with_command(
     let output = join_stdout(stdout_reader)?;
 
     if !status.success() {
-        return Err(GitCollectError::NonZeroExit);
+        return Ok(GitCommandOutput::NonZeroExit);
     }
 
-    Ok(Some(parse_porcelain_v2_z(&output)))
+    Ok(GitCommandOutput::Success(output))
+}
+
+fn trimmed_stdout(output: &[u8]) -> String {
+    String::from_utf8_lossy(output).trim().to_string()
 }
 
 fn remaining_time(deadline: Instant) -> Result<Duration, GitCollectError> {
@@ -300,11 +433,7 @@ pub fn parse_porcelain_v2_z(output: &[u8]) -> GitStatus {
 }
 
 fn parse_record(record: &str, status: &mut GitStatus) {
-    if let Some(oid) = record.strip_prefix("# branch.oid ") {
-        status.head_oid = non_empty_value(oid);
-    } else if let Some(branch) = record.strip_prefix("# branch.head ") {
-        status.branch = parse_branch(branch);
-    } else if let Some(counts) = record.strip_prefix("# branch.ab ") {
+    if let Some(counts) = record.strip_prefix("# branch.ab ") {
         parse_ahead_behind(counts, status);
     } else if let Some(stash_count) = record.strip_prefix("# stash ") {
         status.stashed = stash_count.trim().parse().unwrap_or_default();
@@ -314,22 +443,6 @@ fn parse_record(record: &str, status: &mut GitStatus) {
         status.conflicted += 1;
     } else if record.starts_with("? ") {
         status.untracked += 1;
-    }
-}
-
-fn non_empty_value(value: &str) -> Option<String> {
-    let value = value.trim();
-    if value.is_empty() {
-        None
-    } else {
-        Some(value.to_string())
-    }
-}
-
-fn parse_branch(value: &str) -> Option<String> {
-    match value.trim() {
-        "" | "(detached)" => None,
-        branch => Some(branch.to_string()),
     }
 }
 
@@ -497,13 +610,13 @@ mod tests {
 
     #[test]
     fn renders_branch_segment() {
-        let status = GitStatus {
+        let branch = GitBranch {
             branch: Some("main".to_string()),
-            ..GitStatus::default()
+            ..GitBranch::default()
         };
 
         let rendered =
-            render_git_branch(&status, &SegmentConfig::default()).expect("branch should render");
+            render_git_branch(&branch, &SegmentConfig::default()).expect("branch should render");
 
         assert_eq!(rendered.id, "git_branch");
         assert_eq!(rendered.text, " main");
@@ -513,12 +626,12 @@ mod tests {
 
     #[test]
     fn renders_detached_head_segment_with_short_oid() {
-        let status = GitStatus {
+        let branch = GitBranch {
             head_oid: Some("abcdef0123456789".to_string()),
-            ..GitStatus::default()
+            ..GitBranch::default()
         };
 
-        let rendered = render_git_branch(&status, &SegmentConfig::default())
+        let rendered = render_git_branch(&branch, &SegmentConfig::default())
             .expect("detached head should render");
 
         assert_eq!(rendered.text, " HEAD abcdef0");
@@ -526,32 +639,32 @@ mod tests {
 
     #[test]
     fn renders_branch_segment_with_configured_icon() {
-        let status = GitStatus {
+        let branch = GitBranch {
             branch: Some("main".to_string()),
-            ..GitStatus::default()
+            ..GitBranch::default()
         };
         let config = SegmentConfig {
             icon: Some("git".to_string()),
             ..SegmentConfig::default()
         };
 
-        let rendered = render_git_branch(&status, &config).expect("branch should render");
+        let rendered = render_git_branch(&branch, &config).expect("branch should render");
 
         assert_eq!(rendered.text, "git main");
     }
 
     #[test]
     fn renders_branch_segment_without_icon_when_configured_empty() {
-        let status = GitStatus {
+        let branch = GitBranch {
             branch: Some("main".to_string()),
-            ..GitStatus::default()
+            ..GitBranch::default()
         };
         let config = SegmentConfig {
             icon: Some(String::new()),
             ..SegmentConfig::default()
         };
 
-        let rendered = render_git_branch(&status, &config).expect("branch should render");
+        let rendered = render_git_branch(&branch, &config).expect("branch should render");
 
         assert_eq!(rendered.text, "main");
     }
@@ -559,7 +672,7 @@ mod tests {
     #[test]
     fn hides_branch_segment_when_branch_and_oid_are_absent() {
         assert_eq!(
-            render_git_branch(&GitStatus::default(), &SegmentConfig::default()),
+            render_git_branch(&GitBranch::default(), &SegmentConfig::default()),
             None
         );
     }
@@ -574,7 +687,6 @@ mod tests {
             stashed: 5,
             ahead: 6,
             behind: 7,
-            ..GitStatus::default()
         };
 
         let rendered = render_git_status(&status, &SegmentConfig::default())
@@ -700,13 +812,16 @@ mod tests {
             },
             ..SegmentConfig::default()
         };
-        let status = GitStatus {
+        let branch_status = GitBranch {
             branch: Some("main".to_string()),
+            ..GitBranch::default()
+        };
+        let status = GitStatus {
             staged: 1,
             ..GitStatus::default()
         };
 
-        let branch = render_git_branch(&status, &config).expect("branch should render");
+        let branch = render_git_branch(&branch_status, &config).expect("branch should render");
         let git_status = render_git_status(&status, &config).expect("status should render");
 
         assert_eq!(branch.style.fg.as_deref(), Some("cyan"));
@@ -733,13 +848,17 @@ mod tests {
             },
             ..SegmentConfig::default()
         };
-        let status = GitStatus {
+        let branch_status = GitBranch {
             branch: Some("main".to_string()),
+            ..GitBranch::default()
+        };
+        let status = GitStatus {
             staged: 1,
             ..GitStatus::default()
         };
 
-        let branch = render_git_branch(&status, &branch_config).expect("branch should render");
+        let branch =
+            render_git_branch(&branch_status, &branch_config).expect("branch should render");
         let git_status = render_git_status(&status, &status_config).expect("status should render");
 
         assert_eq!(branch.style.fg.as_deref(), Some("cyan"));
@@ -755,11 +874,16 @@ mod tests {
         let nested = dir.path().join("src").join("deep");
         std::fs::create_dir_all(&nested)?;
 
-        let key = git_cache_key(&nested, 4).expect("repo root should be detected");
+        let key = git_status_cache_key(&nested, 4).expect("repo root should be detected");
 
         assert_eq!(key.segment_id, "git_status");
         assert_eq!(key.source, dir.path().to_string_lossy());
         assert_eq!(key.config_generation, 4);
+
+        let branch_key = git_branch_cache_key(&nested, 4).expect("repo root should be detected");
+        assert_eq!(branch_key.segment_id, "git_branch");
+        assert_eq!(branch_key.source, dir.path().to_string_lossy());
+        assert_eq!(branch_key.config_generation, 4);
         Ok(())
     }
 
@@ -778,12 +902,13 @@ mod tests {
     fn cache_key_is_none_outside_repository() -> Result<(), Box<dyn std::error::Error>> {
         let dir = tempfile::tempdir()?;
 
-        assert_eq!(git_cache_key(dir.path(), 1), None);
+        assert_eq!(git_status_cache_key(dir.path(), 1), None);
+        assert_eq!(git_branch_cache_key(dir.path(), 1), None);
         Ok(())
     }
 
     #[test]
-    fn parses_branch_and_counts_from_porcelain_v2_z() {
+    fn parses_counts_from_porcelain_v2_z() {
         let output = b"# branch.oid abc123def456\0\
 # branch.head main\0\
 # branch.ab +1 -2\0\
@@ -793,8 +918,6 @@ mod tests {
 
         let status = parse_porcelain_v2_z(output);
 
-        assert_eq!(status.branch.as_deref(), Some("main"));
-        assert_eq!(status.head_oid.as_deref(), Some("abc123def456"));
         assert_eq!(status.ahead, 1);
         assert_eq!(status.behind, 2);
         assert_eq!(status.staged, 1);
@@ -804,13 +927,12 @@ mod tests {
     }
 
     #[test]
-    fn parses_detached_head_without_branch() {
+    fn ignores_branch_headers_when_parsing_status() {
         let output = b"# branch.oid abc123\0# branch.head (detached)\0";
 
         let status = parse_porcelain_v2_z(output);
 
-        assert_eq!(status.branch, None);
-        assert_eq!(status.head_oid.as_deref(), Some("abc123"));
+        assert_eq!(status, GitStatus::default());
     }
 
     #[test]
@@ -891,7 +1013,6 @@ u UU N... 000000 000000 000000 100644 100644 100644 abc123 def456 ghi789 conflic
         )?;
         let status = parse_porcelain_v2_z(&output);
 
-        assert!(status.branch.is_some(), "branch should be reported");
         assert_eq!(status.staged, 1);
         assert!(status.has_changes());
         Ok(())
@@ -907,19 +1028,72 @@ u UU N... 000000 000000 000000 100644 100644 100644 abc123 def456 ghi789 conflic
         let status = collect_git_status(dir.path(), Instant::now() + Duration::from_secs(5))?
             .expect("git repo should produce status");
 
-        assert!(status.branch.is_some(), "branch should be reported");
         assert_eq!(status.staged, 1);
         assert!(status.has_changes());
         Ok(())
     }
 
     #[test]
-    fn collector_returns_none_outside_repository() -> Result<(), Box<dyn std::error::Error>> {
+    fn collects_real_git_branch() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempfile::tempdir()?;
+        init_repo(dir.path())?;
+
+        let branch = collect_git_branch(dir.path(), Instant::now() + Duration::from_secs(5))?
+            .expect("git repo should produce a branch");
+
+        assert_eq!(branch.branch.as_deref(), Some("main"));
+        assert_eq!(branch.head_oid, None);
+        Ok(())
+    }
+
+    #[test]
+    fn collects_detached_head_as_short_oid() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempfile::tempdir()?;
+        init_repo(dir.path())?;
+        std::fs::write(dir.path().join("tracked.txt"), "hello")?;
+        run_git(dir.path(), &["add", "tracked.txt"])?;
+        run_git(
+            dir.path(),
+            &[
+                "-c",
+                "user.name=Nova",
+                "-c",
+                "user.email=nova@example.com",
+                "commit",
+                "-m",
+                "initial",
+            ],
+        )?;
+        let full_oid = String::from_utf8(run_git(dir.path(), &["rev-parse", "HEAD"])?)?;
+        run_git(dir.path(), &["checkout", "--detach", "HEAD"])?;
+
+        let branch = collect_git_branch(dir.path(), Instant::now() + Duration::from_secs(5))?
+            .expect("detached git repo should produce a head oid");
+
+        assert_eq!(branch.branch, None);
+        assert_eq!(branch.head_oid.as_deref(), Some(&full_oid.trim()[..7]));
+        Ok(())
+    }
+
+    #[test]
+    fn status_collector_returns_none_outside_repository() -> Result<(), Box<dyn std::error::Error>>
+    {
         let dir = tempfile::tempdir()?;
 
         let status = collect_git_status(dir.path(), Instant::now() + Duration::from_secs(5))?;
 
         assert_eq!(status, None);
+        Ok(())
+    }
+
+    #[test]
+    fn branch_collector_returns_none_outside_repository() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let dir = tempfile::tempdir()?;
+
+        let branch = collect_git_branch(dir.path(), Instant::now() + Duration::from_secs(5))?;
+
+        assert_eq!(branch, None);
         Ok(())
     }
 

@@ -13,7 +13,7 @@ use serde::Deserialize;
 use self::error::{ConfigError, ConfigWarning};
 
 pub const DEFAULT_INITIAL_WAIT_MS: u64 = 0;
-pub const DEFAULT_MIN_LOADING_MS: u64 = 0;
+pub const DEFAULT_MIN_LOADING_MS: u64 = 50;
 static DEFAULT_SEGMENT_CONFIG: LazyLock<SegmentConfig> = LazyLock::new(SegmentConfig::default);
 
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Eq)]
