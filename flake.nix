@@ -3,6 +3,7 @@
 
   inputs = {
     nixpkgs.url = "https://flakehub.com/f/NixOS/nixpkgs/0.1"; # unstable Nixpkgs
+    vhs-nixpkgs.url = "https://flakehub.com/f/DeterminateSystems/nixpkgs-weekly/0.1";
     fenix = {
       url = "https://flakehub.com/f/nix-community/fenix/0.1";
       inputs.nixpkgs.follows = "nixpkgs";
@@ -125,7 +126,21 @@
       );
 
       devShells = forEachSupportedSystem (
-        { pkgs, ... }:
+        { pkgs, system, ... }:
+        let
+          vhsPkgs = import inputs.vhs-nixpkgs {
+            inherit system;
+          };
+          fixedVhs = pkgs.writeShellScriptBin "vhs" ''
+            export PATH="${
+              pkgs.lib.makeBinPath [
+                vhsPkgs.ttyd
+                vhsPkgs.ffmpeg
+              ]
+            }:$PATH"
+            exec ${vhsPkgs.vhs}/bin/.vhs-wrapped "$@"
+          '';
+        in
         {
           default = pkgs.mkShell {
             packages = with pkgs; [
@@ -145,6 +160,7 @@
               rust-analyzer
               shellcheck
               taplo
+              fixedVhs
               zsh
               zsh-bench
             ];

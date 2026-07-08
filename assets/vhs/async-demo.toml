@@ -1,0 +1,67 @@
+[async]
+initial_wait_ms = 0
+
+[layout]
+lines = 2
+
+[layout.line1]
+left = [
+  "dir",
+  "git_branch",
+  "git_status",
+  "rust_version",
+  "nix_shell",
+  "duration",
+]
+right = ["time"]
+
+[layout.line2]
+left = ["exit_status", "prompt_char"]
+right = []
+
+[segments.dir]
+max_components = 4
+style = { fg = "green", bold = false }
+
+[segments.git_branch]
+icon = ""
+style = { fg = "#d06cff", bold = true }
+
+[segments.git_status]
+timeout_ms = 5000
+ttl_ms = 0
+style = { fg = "#d06cff", bold = true }
+
+[segments.git_status.icons]
+conflicted = "="
+modified = "!"
+staged = "+"
+untracked = "?"
+stash = "$"
+ahead = "⇡"
+behind = "⇣"
+
+[segments.rust_version]
+icon = ""
+timeout_ms = 5000
+ttl_ms = 0
+style = { fg = "cyan", bold = true }
+
+[segments.nix_shell]
+icon = ""
+style = { fg = "blue", bold = true }
+
+[segments.duration]
+min_ms = 1000
+prefix = "+"
+prefix_style = { fg = "bright_white", bold = false }
+style = { fg = "bright_white", bold = false }
+
+[segments.time]
+style = { fg = "white", bold = false }
+
+[segments.exit_status]
+style = { fg = "red", bold = true }
+
+[segments.prompt_char]
+character = "❯"

@@ -5,6 +5,10 @@
 Nova は Rust で書かれた、高速でカスタマイズ可能な zsh prompt renderer
 です。
 
+<p align="center">
+  <img src="../assets/vhs/readme-prompt.gif" alt="Nova prompt demo">
+</p>
+
 Git status や runtime version のような遅い情報は per-shell worker process
 で収集し、prompt の blocking path を小さく保ちます。主な対象 shell は zsh
 です。
