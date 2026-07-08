@@ -183,7 +183,10 @@ fn worker_sends_update_when_git_status_finishes() {
         first_output.prompt
     );
 
-    let update_output = read_update_output(&mut response, 1);
+    let update_output =
+        read_update_output_until(&mut response, 1, "git branch and status", |output| {
+            output.prompt.contains("main") && output.prompt.contains("[+]")
+        });
     assert!(update_output.prompt.contains("main"));
     assert!(update_output.prompt.contains("[+]"));
 
@@ -1110,6 +1113,14 @@ fn worker_keeps_stale_git_status_after_refresh_failure() {
             r#"
 count_file='{}'
 count="$(cat "$count_file" 2>/dev/null || printf 0)"
+
+case "$*" in
+  *"symbolic-ref"*)
+    printf 'main\n'
+    exit 0
+    ;;
+esac
+
 count=$((count + 1))
 printf '%s' "$count" > "$count_file"
 
@@ -1160,8 +1171,10 @@ exit 1
         first_output.prompt
     );
 
-    let (update_status, update_output) = read_update_response(&mut response, 1);
-    assert_eq!(update_status, RenderStatus::Final);
+    let update_output =
+        read_update_output_until(&mut response, 1, "stale git status seed", |output| {
+            output.prompt.contains("main") && output.prompt.contains("[+1]")
+        });
     assert!(update_output.prompt.contains("main"));
     assert!(update_output.prompt.contains("[+1]"));
 
@@ -1489,11 +1502,25 @@ fn read_prompt_response(
     (status, output)
 }
 
-fn read_update_output(
+fn read_update_output_until(
     response: &mut WorkerReader,
     expected_generation: u64,
+    description: &str,
+    mut matches: impl FnMut(&nova::render::LoweredPrompt) -> bool,
 ) -> nova::render::LoweredPrompt {
-    read_update_response(response, expected_generation).1
+    let deadline = Instant::now() + Duration::from_secs(15);
+
+    loop {
+        let (_status, output) = read_update_response(response, expected_generation);
+        if matches(&output) {
+            return output;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "timed out waiting for {description}; last prompt: {}",
+            output.prompt
+        );
+    }
 }
 
 fn read_update_response(

@@ -15,7 +15,13 @@ Enter
 Type "nix develop -c cargo build -q"
 Enter
 Sleep 1s
-Type "export PATH=$NOVA_VHS_PROJECT/target/debug:$PATH"
+Type "export NOVA_VHS_REAL_GIT=$(command -v git)"
+Enter
+Type "export NOVA_VHS_BIN=$(mktemp -d)"
+Enter
+Type "cp $NOVA_VHS_PROJECT/docs/assets/vhs/git-main-wrapper.sh $NOVA_VHS_BIN/git && chmod +x $NOVA_VHS_BIN/git"
+Enter
+Type "export PATH=$NOVA_VHS_BIN:$NOVA_VHS_PROJECT/target/debug:$PATH"
 Enter
 Type "printf demo-stash >> README.md && git stash push -m nova-vhs-stash -- README.md && printf staged > .nova-vhs-status && git add .nova-vhs-status && printf modified >> .nova-vhs-status"
 Enter

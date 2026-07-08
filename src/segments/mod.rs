@@ -67,7 +67,8 @@ pub static SYNC_SEGMENTS: &[&dyn SyncSegment] = &[
 ];
 
 pub static ASYNC_SEGMENTS: &[&dyn AsyncSegmentSpec] = &[
-    &git::GitSegment,
+    &git::GitBranchSegment,
+    &git::GitStatusSegment,
     &runtime::RustSegment,
     &runtime::BunSegment,
     &runtime::DenoSegment,
