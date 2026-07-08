@@ -1,18 +1,12 @@
 [async]
 initial_wait_ms = 0
+min_loading_ms = 500
 
 [layout]
 lines = 2
 
 [layout.line1]
-left = [
-  "dir",
-  "git_branch",
-  "git_status",
-  "rust_version",
-  "nix_shell",
-  "duration",
-]
+left = ["dir", "git_branch", "git_status", "rust_version", "duration"]
 right = ["time"]
 
 [layout.line2]
@@ -45,11 +39,8 @@ behind = "⇣"
 icon = ""
 timeout_ms = 5000
 ttl_ms = 0
+min_loading_ms = 1000
 style = { fg = "cyan", bold = true }
-
-[segments.nix_shell]
-icon = ""
-style = { fg = "blue", bold = true }
 
 [segments.duration]
 min_ms = 1000
