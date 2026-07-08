@@ -16,7 +16,7 @@ use thiserror::Error;
 use crate::cache::{AsyncValue, CacheKey, SegmentCache};
 use crate::config::error::ConfigWarning;
 use crate::config::load::{ConfigSnapshot, ConfigSource};
-use crate::config::{Config, DEFAULT_INITIAL_WAIT_MS, SegmentConfig};
+use crate::config::{Config, DEFAULT_INITIAL_WAIT_MS, DEFAULT_MIN_LOADING_MS, SegmentConfig};
 use crate::render::{AsyncSegmentValues, LoweredPrompt, render_with_async};
 use crate::segments::{
     ASYNC_SEGMENTS, AsyncJobSegment, AsyncSegmentFailure, CollectContext, SegmentContent,
@@ -97,7 +97,7 @@ pub fn run(options: WorkerOptions) -> Result<(), WorkerError> {
 
     let mut decoder = FrameDecoder::default();
     let mut cache = SegmentCache::new(CACHE_CAPACITY);
-    let job_pool = JobPool::new(MAX_CONCURRENCY, events);
+    let job_pool = JobPool::new(MAX_CONCURRENCY, events.clone());
     let mut active_prompt = None;
 
     loop {
@@ -116,7 +116,13 @@ pub fn run(options: WorkerOptions) -> Result<(), WorkerError> {
                 )?;
             }
             Ok(WorkerEvent::Job(result)) => {
-                handle_job_result(result, &mut cache, &mut response, &mut active_prompt)?;
+                handle_job_result(
+                    result,
+                    &mut cache,
+                    &mut response,
+                    &mut active_prompt,
+                    &events,
+                )?;
             }
             Ok(WorkerEvent::Closed) | Err(_) => return Ok(()),
             Ok(WorkerEvent::ReadError(error)) => return Err(WorkerError::Read(error)),
@@ -252,6 +258,7 @@ struct WorkerConfig {
 
 #[derive(Debug)]
 struct AsyncJobSegments {
+    min_loading_until: Instant,
     segments: Vec<AsyncJobSegment>,
 }
 
@@ -260,9 +267,38 @@ fn handle_job_result(
     cache: &mut SegmentCache,
     response: &mut impl Write,
     active_prompt: &mut Option<ActivePrompt>,
+    events: &mpsc::Sender<WorkerEvent>,
 ) -> Result<(), WorkerError> {
+    if let Some(delay) = job_result_delay(&result, Instant::now()) {
+        defer_job_result(result, delay, events.clone());
+        return Ok(());
+    }
+
     complete_job_result(result, cache);
     write_update_if_active(cache, response, active_prompt)
+}
+
+fn job_result_delay(result: &JobResult<AsyncJobSegments>, now: Instant) -> Option<Duration> {
+    let JobOutcome::Completed(segments) = &result.outcome else {
+        return None;
+    };
+
+    if segments.min_loading_until <= now {
+        return None;
+    }
+
+    Some(segments.min_loading_until.duration_since(now))
+}
+
+fn defer_job_result(
+    result: JobResult<AsyncJobSegments>,
+    delay: Duration,
+    events: mpsc::Sender<WorkerEvent>,
+) {
+    thread::spawn(move || {
+        thread::sleep(delay);
+        let _ = events.send(WorkerEvent::Job(result));
+    });
 }
 
 fn complete_job_result(result: JobResult<AsyncJobSegments>, cache: &mut SegmentCache) {
@@ -434,21 +470,22 @@ fn schedule_async_refreshes(
         let Some(key) = segment.cache_key(segment.primary_id(), &state, config_generation) else {
             continue;
         };
-        let ttl = segment_ttl(config.segment(segment.primary_id()), segment.default_ttl());
-        if !cache.needs_refresh(&key, Instant::now(), ttl) {
+        let now = Instant::now();
+        let segment_config = config.segment(segment.primary_id());
+        let ttl = segment_ttl(segment_config, segment.default_ttl());
+        if !cache.needs_refresh(&key, now, ttl) {
             continue;
         }
 
+        let min_loading_until =
+            segment_min_loading_until(cache, &key, &config, segment.primary_id(), now);
         let fail_keys = segment
             .render_ids()
             .iter()
             .filter_map(|render_id| segment.cache_key(render_id, &state, config_generation))
             .collect::<Vec<_>>();
         cache.mark_inflight(key.clone());
-        let timeout = segment_timeout(
-            config.segment(segment.primary_id()),
-            segment.default_timeout(),
-        );
+        let timeout = segment_timeout(segment_config, segment.default_timeout());
         let job_state = state.clone();
         let job_config = Arc::clone(&config);
         let spawn_result = pool.spawn_with_fail_keys(
@@ -457,6 +494,7 @@ fn schedule_async_refreshes(
             fail_keys.clone(),
             timeout,
             move |deadline| AsyncJobSegments {
+                min_loading_until,
                 segments: segment.collect(&CollectContext {
                     state: &job_state,
                     config: &job_config,
@@ -528,6 +566,28 @@ fn segment_ttl(config: &SegmentConfig, default: Duration) -> Duration {
     config.ttl_ms.map(Duration::from_millis).unwrap_or(default)
 }
 
+fn segment_min_loading(config: &Config, segment_config: &SegmentConfig) -> Duration {
+    segment_config
+        .min_loading_ms
+        .or(config.async_config.min_loading_ms)
+        .map(Duration::from_millis)
+        .unwrap_or(Duration::from_millis(DEFAULT_MIN_LOADING_MS))
+}
+
+fn segment_min_loading_until(
+    cache: &SegmentCache,
+    key: &CacheKey,
+    config: &Config,
+    segment_id: &str,
+    now: Instant,
+) -> Instant {
+    if cache.has_entry(key) {
+        return now;
+    }
+
+    now + segment_min_loading(config, config.segment(segment_id))
+}
+
 fn write_record<W>(writer: &mut W, record: &WorkerRecord) -> Result<(), WorkerError>
 where
     W: Write,
@@ -591,6 +651,259 @@ mod tests {
         };
 
         assert_eq!(segment_ttl(&config, Duration::from_secs(1)), Duration::ZERO);
+    }
+
+    #[test]
+    fn segment_min_loading_uses_global_config() {
+        let config = Config {
+            async_config: crate::config::AsyncConfig {
+                min_loading_ms: Some(250),
+                ..Default::default()
+            },
+            ..Config::default()
+        };
+
+        assert_eq!(
+            segment_min_loading(&config, &SegmentConfig::default()),
+            Duration::from_millis(250)
+        );
+    }
+
+    #[test]
+    fn segment_min_loading_prefers_segment_config() {
+        let config = Config {
+            async_config: crate::config::AsyncConfig {
+                min_loading_ms: Some(250),
+                ..Default::default()
+            },
+            ..Config::default()
+        };
+        let segment_config = SegmentConfig {
+            min_loading_ms: Some(75),
+            ..SegmentConfig::default()
+        };
+
+        assert_eq!(
+            segment_min_loading(&config, &segment_config),
+            Duration::from_millis(75)
+        );
+    }
+
+    #[test]
+    fn segment_min_loading_allows_zero_segment_override() {
+        let config = Config {
+            async_config: crate::config::AsyncConfig {
+                min_loading_ms: Some(250),
+                ..Default::default()
+            },
+            ..Config::default()
+        };
+        let segment_config = SegmentConfig {
+            min_loading_ms: Some(0),
+            ..SegmentConfig::default()
+        };
+
+        assert_eq!(
+            segment_min_loading(&config, &segment_config),
+            Duration::ZERO
+        );
+    }
+
+    #[test]
+    fn segment_min_loading_until_waits_for_missing_cache_entry() {
+        let cache = SegmentCache::new(4);
+        let config = Config {
+            async_config: crate::config::AsyncConfig {
+                min_loading_ms: Some(40),
+                ..Default::default()
+            },
+            ..Config::default()
+        };
+        let now = Instant::now();
+        let key = CacheKey::new("rust_version", "/repo", 1);
+
+        assert_eq!(
+            segment_min_loading_until(&cache, &key, &config, "rust_version", now),
+            now + Duration::from_millis(40)
+        );
+    }
+
+    #[test]
+    fn segment_min_loading_until_does_not_wait_for_cached_entry() {
+        let mut cache = SegmentCache::new(4);
+        let config = Config {
+            async_config: crate::config::AsyncConfig {
+                min_loading_ms: Some(40),
+                ..Default::default()
+            },
+            ..Config::default()
+        };
+        let now = Instant::now();
+        let key = CacheKey::new("rust_version", "/repo", 1);
+        cache.complete_success(
+            key.clone(),
+            Some(SegmentContent::new(
+                "rust_version",
+                "1.96.1",
+                Default::default(),
+            )),
+            now - Duration::from_secs(60),
+        );
+
+        assert_eq!(
+            segment_min_loading_until(&cache, &key, &config, "rust_version", now),
+            now
+        );
+    }
+
+    #[test]
+    fn job_result_delay_waits_until_min_loading_deadline() {
+        let now = Instant::now();
+        let key = CacheKey::new("rust_version", "/repo", 1);
+        let result = JobResult {
+            generation: 1,
+            key: key.clone(),
+            fail_keys: vec![key],
+            started_at: now,
+            finished_at: now,
+            outcome: JobOutcome::Completed(AsyncJobSegments {
+                min_loading_until: now + Duration::from_millis(10),
+                segments: Vec::new(),
+            }),
+        };
+
+        assert_eq!(
+            job_result_delay(&result, now),
+            Some(Duration::from_millis(10))
+        );
+    }
+
+    #[test]
+    fn job_result_delay_only_waits_for_remaining_min_loading_time() {
+        let started_at = Instant::now();
+        let finished_at = started_at + Duration::from_millis(6);
+        let key = CacheKey::new("rust_version", "/repo", 1);
+        let result = JobResult {
+            generation: 1,
+            key: key.clone(),
+            fail_keys: vec![key],
+            started_at,
+            finished_at,
+            outcome: JobOutcome::Completed(AsyncJobSegments {
+                min_loading_until: started_at + Duration::from_millis(10),
+                segments: Vec::new(),
+            }),
+        };
+
+        assert_eq!(
+            job_result_delay(&result, finished_at),
+            Some(Duration::from_millis(4))
+        );
+    }
+
+    #[test]
+    fn job_result_delay_is_none_when_job_exceeds_min_loading_time() {
+        let started_at = Instant::now();
+        let finished_at = started_at + Duration::from_millis(15);
+        let key = CacheKey::new("rust_version", "/repo", 1);
+        let result = JobResult {
+            generation: 1,
+            key: key.clone(),
+            fail_keys: vec![key],
+            started_at,
+            finished_at,
+            outcome: JobOutcome::Completed(AsyncJobSegments {
+                min_loading_until: started_at + Duration::from_millis(10),
+                segments: Vec::new(),
+            }),
+        };
+
+        assert_eq!(job_result_delay(&result, finished_at), None);
+    }
+
+    #[test]
+    fn job_result_delay_is_none_after_min_loading_deadline() {
+        let now = Instant::now();
+        let key = CacheKey::new("rust_version", "/repo", 1);
+        let result = JobResult {
+            generation: 1,
+            key: key.clone(),
+            fail_keys: vec![key],
+            started_at: now,
+            finished_at: now,
+            outcome: JobOutcome::Completed(AsyncJobSegments {
+                min_loading_until: now,
+                segments: Vec::new(),
+            }),
+        };
+
+        assert_eq!(job_result_delay(&result, now), None);
+    }
+
+    #[test]
+    fn job_result_delay_is_none_for_panicked_jobs() {
+        let now = Instant::now();
+        let key = CacheKey::new("rust_version", "/repo", 1);
+        let result = JobResult {
+            generation: 1,
+            key: key.clone(),
+            fail_keys: vec![key],
+            started_at: now,
+            finished_at: now,
+            outcome: JobOutcome::Panicked,
+        };
+
+        assert_eq!(job_result_delay(&result, now), None);
+    }
+
+    #[test]
+    fn handle_job_result_defers_completion_until_min_loading_deadline() {
+        let now = Instant::now();
+        let key = CacheKey::new("rust_version", "/repo", 1);
+        let result = JobResult {
+            generation: 1,
+            key: key.clone(),
+            fail_keys: vec![key.clone()],
+            started_at: now,
+            finished_at: now,
+            outcome: JobOutcome::Completed(AsyncJobSegments {
+                min_loading_until: now + Duration::from_millis(5),
+                segments: vec![AsyncJobSegment {
+                    key: key.clone(),
+                    content: Ok(Some(SegmentContent::new(
+                        "rust_version",
+                        "1.96.1",
+                        Default::default(),
+                    ))),
+                }],
+            }),
+        };
+        let mut cache = SegmentCache::new(4);
+        let mut response = Vec::new();
+        let mut active_prompt = None;
+        let (events, event_receiver) = mpsc::channel();
+
+        handle_job_result(
+            result,
+            &mut cache,
+            &mut response,
+            &mut active_prompt,
+            &events,
+        )
+        .expect("job result should be deferred");
+
+        assert!(response.is_empty());
+        assert_eq!(
+            cache.lookup(&key, now, Duration::from_secs(1)),
+            AsyncValue::Loading
+        );
+        let event = event_receiver
+            .recv_timeout(Duration::from_secs(1))
+            .expect("deferred job result should be requeued");
+        let WorkerEvent::Job(deferred) = event else {
+            panic!("expected deferred job result");
+        };
+        assert_eq!(deferred.key, key);
     }
 
     #[test]
@@ -812,6 +1125,7 @@ mod tests {
             started_at: finished_at,
             finished_at,
             outcome: JobOutcome::Completed(AsyncJobSegments {
+                min_loading_until: finished_at,
                 segments: vec![AsyncJobSegment {
                     key,
                     content: Ok(Some(SegmentContent::new(
@@ -823,9 +1137,16 @@ mod tests {
             }),
         };
         let mut response = Vec::new();
+        let (events, _event_receiver) = mpsc::channel();
 
-        handle_job_result(result, &mut cache, &mut response, &mut active_prompt)
-            .expect("job result should be handled");
+        handle_job_result(
+            result,
+            &mut cache,
+            &mut response,
+            &mut active_prompt,
+            &events,
+        )
+        .expect("job result should be handled");
 
         let encoded = String::from_utf8(response).expect("response should be utf8");
         let frame = encoded.trim_end_matches('\x1e');
@@ -912,6 +1233,7 @@ mod tests {
             started_at: finished_at,
             finished_at,
             outcome: JobOutcome::Completed(AsyncJobSegments {
+                min_loading_until: finished_at,
                 segments: vec![AsyncJobSegment {
                     key,
                     content: Ok(Some(SegmentContent::new(
@@ -923,9 +1245,16 @@ mod tests {
             }),
         };
         let mut response = Vec::new();
+        let (events, _event_receiver) = mpsc::channel();
 
-        handle_job_result(result, &mut cache, &mut response, &mut active_prompt)
-            .expect("job result should be handled");
+        handle_job_result(
+            result,
+            &mut cache,
+            &mut response,
+            &mut active_prompt,
+            &events,
+        )
+        .expect("job result should be handled");
 
         let encoded = String::from_utf8(response).expect("response should be utf8");
         let frame = encoded.trim_end_matches('\x1e');
@@ -997,6 +1326,7 @@ mod tests {
             started_at: finished_at,
             finished_at,
             outcome: JobOutcome::Completed(AsyncJobSegments {
+                min_loading_until: finished_at,
                 segments: vec![AsyncJobSegment {
                     key,
                     content: Ok(None),
@@ -1004,9 +1334,16 @@ mod tests {
             }),
         };
         let mut response = Vec::new();
+        let (events, _event_receiver) = mpsc::channel();
 
-        handle_job_result(result, &mut cache, &mut response, &mut active_prompt)
-            .expect("job result should be handled");
+        handle_job_result(
+            result,
+            &mut cache,
+            &mut response,
+            &mut active_prompt,
+            &events,
+        )
+        .expect("job result should be handled");
 
         assert!(response.is_empty());
         let active_prompt = active_prompt.expect("active prompt should remain");

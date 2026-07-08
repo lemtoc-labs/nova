@@ -13,6 +13,7 @@ use serde::Deserialize;
 use self::error::{ConfigError, ConfigWarning};
 
 pub const DEFAULT_INITIAL_WAIT_MS: u64 = 0;
+pub const DEFAULT_MIN_LOADING_MS: u64 = 0;
 static DEFAULT_SEGMENT_CONFIG: LazyLock<SegmentConfig> = LazyLock::new(SegmentConfig::default);
 
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Eq)]
@@ -28,6 +29,7 @@ pub struct Config {
 #[serde(default)]
 pub struct AsyncConfig {
     pub initial_wait_ms: Option<u64>,
+    pub min_loading_ms: Option<u64>,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
@@ -56,6 +58,7 @@ pub struct SegmentConfig {
     pub loading: Option<String>,
     pub max_components: Option<usize>,
     pub min_ms: Option<u64>,
+    pub min_loading_ms: Option<u64>,
     pub force_display: Option<bool>,
     pub format: Option<String>,
     pub prefix: Option<String>,
@@ -286,6 +289,7 @@ mod tests {
         let config = Config::default();
 
         assert_eq!(config.async_config.initial_wait_ms, None);
+        assert_eq!(config.async_config.min_loading_ms, None);
         assert_eq!(config.layout.lines, 2);
         assert_eq!(config.layout.separator, None);
         assert_eq!(config.layout.separator(), " ");
@@ -320,6 +324,7 @@ mod tests {
 
             [async]
             initial_wait_ms = 10
+            min_loading_ms = 50
 
             [layout.line1]
             left = ["dir", "prompt_char"]
@@ -347,6 +352,7 @@ mod tests {
 
             [segments.git_status]
             loading = "…"
+            min_loading_ms = 25
             icons = { staged = "S", untracked = "U", stash = "T" }
             style = { fg = "202", bg = "#102030" }
             "##,
@@ -354,6 +360,7 @@ mod tests {
         .expect("config should parse");
 
         assert_eq!(config.async_config.initial_wait_ms, Some(10));
+        assert_eq!(config.async_config.min_loading_ms, Some(50));
         let dir = config.segment("dir");
         let prompt_char = config.segment("prompt_char");
         let duration = config.segment("duration");
@@ -383,6 +390,7 @@ mod tests {
         assert_eq!(git_status.style.fg.as_deref(), Some("202"));
         assert_eq!(git_status.style.bg.as_deref(), Some("#102030"));
         assert_eq!(git_status.loading.as_deref(), Some("…"));
+        assert_eq!(git_status.min_loading_ms, Some(25));
         assert_eq!(
             git_status.icons.get("staged").map(String::as_str),
             Some("S")

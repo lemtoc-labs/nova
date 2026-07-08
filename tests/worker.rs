@@ -274,6 +274,101 @@ fn worker_sends_update_when_rust_version_finishes() {
 }
 
 #[test]
+fn worker_delays_fast_cache_miss_update_until_min_loading_ms() {
+    let _guard = worker_test_lock();
+    let tempdir = tempfile::tempdir().expect("tempdir should be created");
+    let runtime_dir = tempdir.path().join("runtime");
+    fs::create_dir(&runtime_dir).expect("runtime dir should be created");
+    create_fifo(runtime_dir.join("req"));
+    create_fifo(runtime_dir.join("resp"));
+
+    let project = tempdir.path().join("project");
+    fs::create_dir(&project).expect("project dir should be created");
+    fs::write(project.join("Cargo.toml"), "[package]\nname = \"demo\"\n")
+        .expect("Cargo.toml should be written");
+
+    let config_path = tempdir.path().join("nova.toml");
+    fs::write(
+        &config_path,
+        r#"
+        [async]
+        min_loading_ms = 250
+
+        [layout]
+        lines = 2
+
+        [layout.line1]
+        left = ["dir", "rust_version"]
+        right = []
+
+        [layout.line2]
+        left = ["prompt_char"]
+        right = []
+        "#,
+    )
+    .expect("config should be written");
+
+    let bin_dir = tempdir.path().join("bin");
+    fs::create_dir(&bin_dir).expect("bin dir should be created");
+    write_script(&bin_dir, "rustc", "printf 'rustc 1.96.1 (abc date)\\n'\n");
+
+    let path = format!(
+        "{}:{}",
+        bin_dir.to_string_lossy(),
+        env::var("PATH").unwrap_or_default()
+    );
+    let mut child = StdCommand::new(cargo_bin("nova"))
+        .arg("worker")
+        .arg("--dir")
+        .arg(&runtime_dir)
+        .arg("--session-token")
+        .arg("test-token")
+        .env("NOVA_CONFIG", &config_path)
+        .env("PATH", path)
+        .spawn()
+        .expect("worker should spawn");
+
+    let mut request = open_fifo_write(runtime_dir.join("req"));
+    let mut response = WorkerReader::new(open_fifo_read(runtime_dir.join("resp")));
+
+    assert_eq!(
+        read_worker_record(&mut response),
+        WorkerRecord::Handshake {
+            session_token: "test-token".to_string(),
+            initial_wait_ms: 0,
+        }
+    );
+
+    let started_at = Instant::now();
+    write_render_request(&mut request, 1, project, 160);
+    let (first_status, first_output) = read_prompt_response(&mut response, 1);
+    assert_eq!(first_status, RenderStatus::Partial);
+    assert!(
+        !first_output.prompt.contains("1.96.1"),
+        "first render should not block on rust version: {}",
+        first_output.prompt
+    );
+
+    let min_loading = Duration::from_millis(250);
+    let remaining = min_loading.saturating_sub(started_at.elapsed());
+    if remaining > Duration::from_millis(50) {
+        assert_no_worker_record(&mut response, remaining - Duration::from_millis(25));
+    }
+
+    let (update_status, update_output) = read_update_response(&mut response, 1);
+    assert!(
+        started_at.elapsed() >= min_loading,
+        "fast async update should not arrive before min_loading_ms"
+    );
+    assert_eq!(update_status, RenderStatus::Final);
+    assert!(update_output.prompt.contains(" 1.96.1"));
+
+    drop(request);
+    drop(response);
+    assert_worker_exits(&mut child);
+}
+
+#[test]
 fn worker_omits_missing_rust_command_without_update() {
     let _guard = worker_test_lock();
     let tempdir = tempfile::tempdir().expect("tempdir should be created");

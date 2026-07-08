@@ -544,6 +544,7 @@ left  = ["prompt_char"]
 
 [async]
 initial_wait_ms = 0             # extra final wait budget after the first partial reply
+min_loading_ms = 0              # global cache-miss async update floor
 max_concurrency = 2
 timeout_ms = 1000               # per-segment override: [segments.<id>] timeout_ms
 ttl_ms = 300000                 # per-segment override: [segments.<id>] ttl_ms
@@ -560,6 +561,7 @@ icon = ""                     # set to "" to hide the icon
 
 [segments.git_status]
 ttl_ms = 0
+min_loading_ms = 300            # overrides [async].min_loading_ms for git
 loading = "…"                 # optional; omitted by default to avoid layout shift
 icons = { staged = "+", modified = "!", untracked = "?", stash = "$" } # "" hides an indicator
 
@@ -575,6 +577,13 @@ min_ms = 2000                   # hide below this
 `initial_wait_ms` defaults to `0`. Local A/B measurements after PR-3 showed
 stable sub-millisecond input lag at `0`, while larger waits increased first
 prompt lag without improving command or input lag.
+
+`min_loading_ms` also defaults to `0`. It only applies to cache-miss async
+refreshes: collection starts immediately, but an update that finishes before
+the configured floor is held until that floor. If collection takes longer than
+the floor, the update is emitted as soon as it finishes. Segment-level
+`min_loading_ms` overrides `[async].min_loading_ms`; cached ready or stale
+values render without this delay.
 
 Rules:
 
