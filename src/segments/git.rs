@@ -19,6 +19,7 @@ use crate::segments::{
 const GIT_BRANCH_SEGMENT_ID: &str = "git_branch";
 const GIT_BRANCH_ICON: &str = "";
 const GIT_STATUS_SEGMENT_ID: &str = "git_status";
+const DEFAULT_GIT_STATUS_SEPARATOR: &str = "";
 const GIT_RENDER_IDS: &[&str] = &[GIT_BRANCH_SEGMENT_ID, GIT_STATUS_SEGMENT_ID];
 const GIT_STATUS_ARGS: &[&str] = &[
     "--no-optional-locks",
@@ -371,46 +372,62 @@ fn short_oid(oid: &str) -> &str {
 
 fn format_git_indicators(status: &GitStatus, config: &SegmentConfig) -> Option<String> {
     let mut indicators = Vec::new();
+    let show_counts = config.show_counts.unwrap_or(false);
     push_indicator(
         &mut indicators,
         git_status_icon(config, "conflicted", "="),
         status.conflicted,
+        show_counts,
     );
     push_indicator(
         &mut indicators,
         git_status_icon(config, "modified", "!"),
         status.modified,
+        show_counts,
     );
     push_indicator(
         &mut indicators,
         git_status_icon(config, "staged", "+"),
         status.staged,
+        show_counts,
     );
     push_indicator(
         &mut indicators,
         git_status_icon(config, "untracked", "?"),
         status.untracked,
+        show_counts,
     );
     push_indicator(
         &mut indicators,
         git_status_icon(config, "stash", "$"),
         status.stashed,
+        show_counts,
     );
     push_indicator(
         &mut indicators,
         git_status_icon(config, "ahead", "⇡"),
         status.ahead,
+        show_counts,
     );
     push_indicator(
         &mut indicators,
         git_status_icon(config, "behind", "⇣"),
         status.behind,
+        show_counts,
     );
 
     if indicators.is_empty() {
         None
     } else {
-        Some(format!("[{}]", indicators.join(" ")))
+        Some(format!(
+            "[{}]",
+            indicators.join(
+                config
+                    .separator
+                    .as_deref()
+                    .unwrap_or(DEFAULT_GIT_STATUS_SEPARATOR),
+            )
+        ))
     }
 }
 
@@ -422,11 +439,21 @@ fn git_status_icon<'a>(config: &'a SegmentConfig, name: &str, default: &'a str) 
     }
 }
 
-fn push_indicator(indicators: &mut Vec<String>, symbol: Option<&str>, count: usize) {
+fn push_indicator(
+    indicators: &mut Vec<String>,
+    symbol: Option<&str>,
+    count: usize,
+    show_counts: bool,
+) {
     if count > 0
         && let Some(symbol) = symbol
     {
-        indicators.push(format!("{symbol}{count}"));
+        let indicator = if show_counts {
+            format!("{symbol}{count}")
+        } else {
+            symbol.to_string()
+        };
+        indicators.push(indicator);
     }
 }
 
@@ -554,7 +581,7 @@ mod tests {
             .expect("dirty status should render");
 
         assert_eq!(rendered.id, "git_status");
-        assert_eq!(rendered.text, "[=4 !1 +2 ?3 $5 ⇡6 ⇣7]");
+        assert_eq!(rendered.text, "[=!+?$⇡⇣]");
         assert_eq!(rendered.style.fg.as_deref(), Some("red"));
         assert!(rendered.style.bold);
     }
@@ -580,7 +607,62 @@ mod tests {
 
         let rendered = render_git_status(&status, &config).expect("dirty status should render");
 
-        assert_eq!(rendered.text, "[!1 S2 U3 T4]");
+        assert_eq!(rendered.text, "[!SUT]");
+    }
+
+    #[test]
+    fn renders_status_indicators_with_configured_space_separator() {
+        let status = GitStatus {
+            staged: 2,
+            modified: 1,
+            untracked: 3,
+            ..GitStatus::default()
+        };
+        let config = SegmentConfig {
+            separator: Some(" ".to_string()),
+            ..SegmentConfig::default()
+        };
+
+        let rendered = render_git_status(&status, &config).expect("dirty status should render");
+
+        assert_eq!(rendered.text, "[! + ?]");
+    }
+
+    #[test]
+    fn renders_status_indicators_with_configured_empty_separator() {
+        let status = GitStatus {
+            staged: 2,
+            modified: 1,
+            untracked: 3,
+            ..GitStatus::default()
+        };
+        let config = SegmentConfig {
+            separator: Some(String::new()),
+            show_counts: Some(true),
+            ..SegmentConfig::default()
+        };
+
+        let rendered = render_git_status(&status, &config).expect("dirty status should render");
+
+        assert_eq!(rendered.text, "[!1+2?3]");
+    }
+
+    #[test]
+    fn renders_status_indicators_with_configured_counts() {
+        let status = GitStatus {
+            staged: 2,
+            modified: 1,
+            untracked: 3,
+            ..GitStatus::default()
+        };
+        let config = SegmentConfig {
+            show_counts: Some(true),
+            ..SegmentConfig::default()
+        };
+
+        let rendered = render_git_status(&status, &config).expect("dirty status should render");
+
+        assert_eq!(rendered.text, "[!1+2?3]");
     }
 
     #[test]
@@ -597,7 +679,7 @@ mod tests {
 
         let rendered = render_git_status(&status, &config).expect("dirty status should render");
 
-        assert_eq!(rendered.text, "[!1]");
+        assert_eq!(rendered.text, "[!]");
     }
 
     #[test]

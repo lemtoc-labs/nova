@@ -62,6 +62,8 @@ pub struct SegmentConfig {
     pub force_display: Option<bool>,
     pub format: Option<String>,
     pub prefix: Option<String>,
+    pub separator: Option<String>,
+    pub show_counts: Option<bool>,
     pub ttl_ms: Option<u64>,
     pub timeout_ms: Option<u64>,
     pub style: StyleConfig,
@@ -353,6 +355,8 @@ mod tests {
             [segments.git_status]
             loading = "…"
             min_loading_ms = 25
+            separator = " "
+            show_counts = true
             icons = { staged = "S", untracked = "U", stash = "T" }
             style = { fg = "202", bg = "#102030" }
             "##,
@@ -391,6 +395,8 @@ mod tests {
         assert_eq!(git_status.style.bg.as_deref(), Some("#102030"));
         assert_eq!(git_status.loading.as_deref(), Some("…"));
         assert_eq!(git_status.min_loading_ms, Some(25));
+        assert_eq!(git_status.separator.as_deref(), Some(" "));
+        assert_eq!(git_status.show_counts, Some(true));
         assert_eq!(
             git_status.icons.get("staged").map(String::as_str),
             Some("S")
