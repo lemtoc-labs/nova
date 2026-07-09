@@ -14,6 +14,27 @@ pub fn truncate_start(input: &str, max_width: usize) -> String {
     truncate(input, max_width, TruncateSide::Start)
 }
 
+pub fn truncate_middle(input: &str, max_width: usize) -> String {
+    if display_width(input) <= max_width {
+        return input.to_string();
+    }
+
+    if max_width == 0 {
+        return String::new();
+    }
+
+    if max_width == 1 {
+        return "…".to_string();
+    }
+
+    let content_width = max_width - 1;
+    let prefix_width = content_width / 2;
+    let prefix = take_prefix(input, prefix_width);
+    let suffix_width = content_width.saturating_sub(display_width(&prefix));
+    let suffix = take_suffix(input, suffix_width);
+    format!("{prefix}…{suffix}")
+}
+
 fn truncate(input: &str, max_width: usize, side: TruncateSide) -> String {
     if display_width(input) <= max_width {
         return input.to_string();
@@ -86,6 +107,7 @@ mod tests {
     fn truncates_without_exceeding_width() {
         assert_eq!(truncate_end("abcdef", 4), "abc…");
         assert_eq!(truncate_start("abcdef", 4), "…def");
+        assert_eq!(truncate_middle("abcdef", 4), "a…ef");
         assert!(display_width(&truncate_end("日本語abcdef", 6)) <= 6);
     }
 }
