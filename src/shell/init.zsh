@@ -13,7 +13,7 @@ typeset -g _nova_cmd_start=
 typeset -g _nova_runtime_dir="${XDG_RUNTIME_DIR:-${TMPDIR:-/tmp}}/nova-$$"
 typeset -g _nova_req_fifo="$_nova_runtime_dir/req"
 typeset -g _nova_resp_fifo="$_nova_runtime_dir/resp"
-typeset -g _nova_session_token=
+typeset -g _nova_session_token=@NOVA_SESSION_TOKEN@
 typeset -g _nova_req_fd=
 typeset -g _nova_resp_fd=
 typeset -g _nova_worker_pid=
@@ -30,36 +30,13 @@ typeset -g _nova_nul=$'\0'
 typeset -g _nova_rs=$'\x1e'
 typeset -g _nova_protocol_version=@NOVA_PROTOCOL_VERSION@
 
-_nova_generate_session_token() {
-  emulate -L zsh
-  local token=
-  if [[ -r /dev/urandom ]]; then
-    token=$(command od -An -N16 -tx1 /dev/urandom 2>/dev/null | command tr -d '[:space:]') || token=
-  fi
-  if [[ -n "$token" ]]; then
-    print -r -- "$token-$$"
-  else
-    print -r -- "${RANDOM}${RANDOM}${RANDOM}${RANDOM}${RANDOM}${RANDOM}${RANDOM}${RANDOM}-$$"
-  fi
-}
-
-_nova_session_token="$(_nova_generate_session_token)"
-
 _nova_setup_runtime() {
   emulate -L zsh
   command rm -rf -- "$_nova_runtime_dir" 2>/dev/null || true
   command mkdir -m 700 -- "$_nova_runtime_dir" || return 1
   [[ -d "$_nova_runtime_dir" && -O "$_nova_runtime_dir" ]] || return 1
-  command chmod 700 "$_nova_runtime_dir" 2>/dev/null || {
-    command rm -rf -- "$_nova_runtime_dir" 2>/dev/null || true
-    return 1
-  }
-  local old_umask
-  old_umask=$(umask)
-  umask 077
-  command mkfifo -- "$_nova_req_fifo" "$_nova_resp_fifo"
+  command mkfifo -m 600 -- "$_nova_req_fifo" "$_nova_resp_fifo"
   local -i mkfifo_status=$?
-  umask "$old_umask"
   if (( mkfifo_status != 0 )); then
     command rm -rf -- "$_nova_runtime_dir" 2>/dev/null || true
   fi
