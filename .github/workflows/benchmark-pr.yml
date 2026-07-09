@@ -42,11 +42,30 @@ jobs:
       - name: Convert benchmark result
         run: .github/scripts/convert-zsh-bench.sh zsh-bench-result.txt benchmark-result.json
 
+      - name: Load main benchmark baseline
+        env:
+          NOVA_BENCH_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          if git fetch --depth=1 origin gh-pages:refs/remotes/origin/gh-pages &&
+            git show refs/remotes/origin/gh-pages:bench/zsh/data.js > zsh-bench-data.js &&
+            .github/scripts/extract-zsh-bench-baseline.sh zsh-bench-data.js "$NOVA_BENCH_BASE_SHA" previous-benchmark-result.json zsh-bench-baseline.env; then
+            cat zsh-bench-baseline.env >> "$GITHUB_ENV"
+          else
+            printf '[]\n' > previous-benchmark-result.json
+            {
+              echo "NOVA_BENCH_PREVIOUS_FOUND=false"
+              echo "NOVA_BENCH_PREVIOUS_MATCHED=false"
+              echo "NOVA_BENCH_PREVIOUS_TARGET_SHA=$NOVA_BENCH_BASE_SHA"
+              echo "NOVA_BENCH_PREVIOUS_SHA="
+              echo "NOVA_BENCH_PREVIOUS_URL="
+            } >> "$GITHUB_ENV"
+          fi
+
       - name: Render benchmark comment
         env:
           NOVA_BENCH_COMMIT_SHA: ${{ github.event.pull_request.head.sha }}
           NOVA_BENCH_COMMIT_URL: ${{ github.event.pull_request.head.repo.html_url }}/commit/${{ github.event.pull_request.head.sha }}
-        run: .github/scripts/render-zsh-bench-comment.sh benchmark-result.json zsh-bench-comment.md
+        run: .github/scripts/render-zsh-bench-comment.sh benchmark-result.json zsh-bench-comment.md previous-benchmark-result.json
 
       - name: Write benchmark summary
         run: cat zsh-bench-comment.md >> "$GITHUB_STEP_SUMMARY"
@@ -64,4 +83,4 @@ jobs:
         if: always()
         run: |
           rm -rf "$RUNNER_TEMP/zsh-bench"
-          rm -f zsh-bench-result.txt benchmark-result.json zsh-bench-comment.md
+          rm -f zsh-bench-result.txt benchmark-result.json previous-benchmark-result.json zsh-bench-baseline.env zsh-bench-data.js zsh-bench-comment.md

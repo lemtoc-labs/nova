@@ -23,6 +23,8 @@ jobs:
       NOVA_ZSH_BENCH_ITERS: 16
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 2
 
       - name: Add local tool paths
         run: |
@@ -45,8 +47,32 @@ jobs:
       - name: Convert benchmark result
         run: .github/scripts/convert-zsh-bench.sh zsh-bench-result.txt benchmark-result.json
 
+      - name: Load previous benchmark baseline
+        env:
+          NOVA_BENCH_BASE_SHA: ${{ github.event.before }}
+        run: |
+          baseline_sha="$NOVA_BENCH_BASE_SHA"
+          if [[ -z "$baseline_sha" || "$baseline_sha" == "0000000000000000000000000000000000000000" ]]; then
+            baseline_sha="$(git rev-parse HEAD^ 2>/dev/null || true)"
+          fi
+
+          if git fetch --depth=1 origin gh-pages:refs/remotes/origin/gh-pages &&
+            git show refs/remotes/origin/gh-pages:bench/zsh/data.js > zsh-bench-data.js &&
+            .github/scripts/extract-zsh-bench-baseline.sh zsh-bench-data.js "$baseline_sha" previous-benchmark-result.json zsh-bench-baseline.env; then
+            cat zsh-bench-baseline.env >> "$GITHUB_ENV"
+          else
+            printf '[]\n' > previous-benchmark-result.json
+            {
+              echo "NOVA_BENCH_PREVIOUS_FOUND=false"
+              echo "NOVA_BENCH_PREVIOUS_MATCHED=false"
+              echo "NOVA_BENCH_PREVIOUS_TARGET_SHA=$baseline_sha"
+              echo "NOVA_BENCH_PREVIOUS_SHA="
+              echo "NOVA_BENCH_PREVIOUS_URL="
+            } >> "$GITHUB_ENV"
+          fi
+
       - name: Render benchmark summary
-        run: .github/scripts/render-zsh-bench-comment.sh benchmark-result.json zsh-bench-summary.md
+        run: .github/scripts/render-zsh-bench-comment.sh benchmark-result.json zsh-bench-summary.md previous-benchmark-result.json
 
       - name: Write benchmark summary
         run: cat zsh-bench-summary.md >> "$GITHUB_STEP_SUMMARY"
@@ -76,4 +102,4 @@ jobs:
       - name: Clean benchmark temporary files
         if: always()
         run: |
-          rm -f zsh-bench-result.txt benchmark-result.json zsh-bench-summary.md
+          rm -f zsh-bench-result.txt benchmark-result.json previous-benchmark-result.json zsh-bench-baseline.env zsh-bench-data.js zsh-bench-summary.md
