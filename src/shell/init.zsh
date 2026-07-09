@@ -13,7 +13,7 @@ typeset -g _nova_cmd_start=
 typeset -g _nova_runtime_dir="${XDG_RUNTIME_DIR:-${TMPDIR:-/tmp}}/nova-$$"
 typeset -g _nova_req_fifo="$_nova_runtime_dir/req"
 typeset -g _nova_resp_fifo="$_nova_runtime_dir/resp"
-typeset -g _nova_session_token="${RANDOM}${RANDOM}${RANDOM}${RANDOM}-$$"
+typeset -g _nova_session_token=@NOVA_SESSION_TOKEN@
 typeset -g _nova_req_fd=
 typeset -g _nova_resp_fd=
 typeset -g _nova_worker_pid=
@@ -33,8 +33,14 @@ typeset -g _nova_protocol_version=@NOVA_PROTOCOL_VERSION@
 _nova_setup_runtime() {
   emulate -L zsh
   command rm -rf -- "$_nova_runtime_dir" 2>/dev/null || true
-  command mkdir -p -- "$_nova_runtime_dir" || return 1
-  command mkfifo -- "$_nova_req_fifo" "$_nova_resp_fifo" || return 1
+  command mkdir -m 700 -- "$_nova_runtime_dir" || return 1
+  [[ -d "$_nova_runtime_dir" && -O "$_nova_runtime_dir" ]] || return 1
+  command mkfifo -m 600 -- "$_nova_req_fifo" "$_nova_resp_fifo"
+  local -i mkfifo_status=$?
+  if (( mkfifo_status != 0 )); then
+    command rm -rf -- "$_nova_runtime_dir" 2>/dev/null || true
+  fi
+  return $mkfifo_status
 }
 
 _nova_spawn_worker() {
@@ -42,7 +48,8 @@ _nova_spawn_worker() {
   _nova_worker_alive && return 0
   unsetopt bg_nice 2>/dev/null || true
   [[ -p "$_nova_req_fifo" && -p "$_nova_resp_fifo" ]] || _nova_setup_runtime || return 1
-  "$_nova_bin" worker --dir "$_nova_runtime_dir" --session-token "$_nova_session_token" \
+  NOVA_SESSION_TOKEN="$_nova_session_token" NOVA_PARENT_PID=$$ \
+    "$_nova_bin" worker --dir "$_nova_runtime_dir" \
     </dev/null >/dev/null 2>/dev/null &!
   _nova_worker_pid=$!
 }
@@ -305,9 +312,6 @@ _nova_precmd() {
 _nova_cleanup() {
   emulate -L zsh
   _nova_close_fds
-  if [[ -n ${_nova_worker_pid:-} ]]; then
-    kill "$_nova_worker_pid" 2>/dev/null || true
-  fi
   command rm -rf -- "$_nova_runtime_dir" 2>/dev/null || true
 }
 
