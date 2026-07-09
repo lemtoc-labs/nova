@@ -44,8 +44,8 @@ fn spawn_worker(runtime_dir: &Path, session_token: &str, config: WorkerConfig<'_
         .arg("worker")
         .arg("--dir")
         .arg(runtime_dir)
-        .arg("--session-token")
-        .arg(session_token)
+        .env("NOVA_SESSION_TOKEN", session_token)
+        .env("NOVA_PARENT_PID", std::process::id().to_string())
         .env("XDG_CONFIG_HOME", &config_home)
         .env("HOME", &home);
 
@@ -207,6 +207,31 @@ fn worker_sends_update_when_git_status_finishes() {
     drop(request);
     drop(response);
     assert_worker_exits(&mut child);
+}
+
+#[test]
+fn worker_exits_and_removes_runtime_dir_when_parent_is_gone_before_transport_opens() {
+    let _guard = worker_test_lock();
+    let tempdir = tempfile::tempdir().expect("tempdir should be created");
+    let runtime_dir = tempdir.path().join("nova-orphan");
+    fs::create_dir(&runtime_dir).expect("runtime dir should be created");
+    create_fifo(runtime_dir.join("req"));
+    create_fifo(runtime_dir.join("resp"));
+
+    let mut child = spawn_worker(&runtime_dir, "test-token", WorkerConfig::IsolatedDefault)
+        .env("NOVA_PARENT_PID", "999999999")
+        .spawn()
+        .expect("worker should spawn");
+
+    let status = child
+        .wait_timeout(Duration::from_secs(3))
+        .expect("worker wait should succeed")
+        .expect("worker should exit after parent disappears");
+    assert!(status.success(), "worker should exit cleanly");
+    assert!(
+        !runtime_dir.exists(),
+        "worker should remove its runtime dir when parent disappears"
+    );
 }
 
 #[test]

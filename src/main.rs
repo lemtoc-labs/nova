@@ -217,12 +217,20 @@ impl PromptArgs {
 struct WorkerArgs {
     runtime_dir: PathBuf,
     session_token: String,
+    parent_pid: Option<u32>,
 }
 
 impl WorkerArgs {
     fn parse(args: &[String]) -> Result<Self, String> {
         let mut runtime_dir = None;
-        let mut session_token = None;
+        let mut session_token = env::var("NOVA_SESSION_TOKEN")
+            .ok()
+            .filter(|token| !token.is_empty());
+        let mut parent_pid = env::var("NOVA_PARENT_PID")
+            .ok()
+            .filter(|pid| !pid.is_empty())
+            .map(|pid| parse_parent_pid(&pid, "NOVA_PARENT_PID"))
+            .transpose()?;
         let mut index = 0;
 
         while index < args.len() {
@@ -236,14 +244,23 @@ impl WorkerArgs {
                         Some(required_value(args, index, "--session-token")?.to_string());
                     index += 2;
                 }
+                "--parent-pid" => {
+                    parent_pid = Some(parse_parent_pid(
+                        required_value(args, index, "--parent-pid")?,
+                        "--parent-pid",
+                    )?);
+                    index += 2;
+                }
                 option => return Err(format!("unknown worker option `{option}`")),
             }
         }
 
         Ok(Self {
             runtime_dir: runtime_dir.ok_or_else(|| "worker requires --dir".to_string())?,
-            session_token: session_token
-                .ok_or_else(|| "worker requires --session-token".to_string())?,
+            session_token: session_token.ok_or_else(|| {
+                "worker requires NOVA_SESSION_TOKEN or --session-token".to_string()
+            })?,
+            parent_pid,
         })
     }
 
@@ -251,6 +268,7 @@ impl WorkerArgs {
         run_worker_loop(WorkerOptions {
             runtime_dir: self.runtime_dir,
             session_token: self.session_token,
+            parent_pid: self.parent_pid,
         })
         .map_err(|error| error.to_string())
     }
@@ -336,6 +354,15 @@ fn parse_columns(value: &str) -> Result<u16, String> {
         Err("--cols must be greater than 0".to_string())
     } else {
         Ok(columns)
+    }
+}
+
+fn parse_parent_pid(value: &str, source: &str) -> Result<u32, String> {
+    let pid = parse_value(value, source)?;
+    if pid == 0 {
+        Err(format!("{source} must be greater than 0"))
+    } else {
+        Ok(pid)
     }
 }
 

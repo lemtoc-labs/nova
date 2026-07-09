@@ -6,7 +6,8 @@ pub mod protocol;
 use std::collections::BTreeSet;
 use std::fs::OpenOptions;
 use std::io::{Read, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
 use std::sync::{Arc, mpsc};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -31,11 +32,13 @@ use protocol::{
 
 const CACHE_CAPACITY: usize = 128;
 const MAX_CONCURRENCY: usize = 2;
+const PARENT_CHECK_INTERVAL: Duration = Duration::from_secs(1);
 
 #[derive(Clone, Debug)]
 pub struct WorkerOptions {
     pub runtime_dir: PathBuf,
     pub session_token: String,
+    pub parent_pid: Option<u32>,
 }
 
 #[derive(Debug, Error)]
@@ -59,6 +62,9 @@ pub enum WorkerError {
 }
 
 pub fn run(options: WorkerOptions) -> Result<(), WorkerError> {
+    let _runtime_cleanup = RuntimeDirCleanup::new(options.runtime_dir.clone());
+    spawn_parent_monitor(options.parent_pid, options.runtime_dir.clone());
+
     let request_path = options.runtime_dir.join("req");
     let response_path = options.runtime_dir.join("resp");
     let request = OpenOptions::new()
@@ -128,6 +134,70 @@ pub fn run(options: WorkerOptions) -> Result<(), WorkerError> {
             Ok(WorkerEvent::ReadError(error)) => return Err(WorkerError::Read(error)),
         }
     }
+}
+
+#[derive(Debug)]
+struct RuntimeDirCleanup {
+    path: PathBuf,
+}
+
+impl RuntimeDirCleanup {
+    fn new(path: PathBuf) -> Self {
+        Self { path }
+    }
+}
+
+impl Drop for RuntimeDirCleanup {
+    fn drop(&mut self) {
+        cleanup_runtime_dir(&self.path);
+    }
+}
+
+fn spawn_parent_monitor(parent_pid: Option<u32>, runtime_dir: PathBuf) {
+    let Some(parent_pid) = parent_pid else {
+        return;
+    };
+
+    thread::spawn(move || {
+        loop {
+            thread::sleep(PARENT_CHECK_INTERVAL);
+            if !parent_is_alive(parent_pid) {
+                cleanup_runtime_dir(&runtime_dir);
+                std::process::exit(0);
+            }
+        }
+    });
+}
+
+fn parent_is_alive(parent_pid: u32) -> bool {
+    for command in ["/bin/kill", "/usr/bin/kill", "kill"] {
+        match Command::new(command)
+            .arg("-0")
+            .arg(parent_pid.to_string())
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+        {
+            Ok(status) => return status.success(),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(_) => return true,
+        }
+    }
+
+    true
+}
+
+fn cleanup_runtime_dir(path: &Path) {
+    if is_nova_runtime_dir(path) {
+        let _ = std::fs::remove_dir_all(path);
+    }
+}
+
+fn is_nova_runtime_dir(path: &Path) -> bool {
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| name.starts_with("nova-"))
 }
 
 #[derive(Debug)]
