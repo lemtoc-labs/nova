@@ -217,26 +217,32 @@ fn fit_prompt_line(
 }
 
 fn fit_side(segments: &mut Vec<SegmentContent>, columns: usize, separator: &str) {
+    remove_zero_width_segments(segments);
+
     if side_width(segments, separator) <= columns {
         return;
     }
 
     shrink_dir_segment(segments, columns, separator);
+    remove_zero_width_segments(segments);
 
     while side_width(segments, separator) > columns && segments.len() > 1 {
-        segments.pop();
+        drop_next_segment(segments);
+        shrink_dir_segment(segments, columns, separator);
+        remove_zero_width_segments(segments);
     }
 
     if side_width(segments, separator) > columns
         && let Some(segment) = segments.first_mut()
     {
         let next_text = if segment.id == "dir" {
-            width::truncate_start(&segment.text, columns)
+            truncate_dir_text(&segment.text, columns)
         } else {
             width::truncate_end(&segment.text, columns)
         };
         segment.text = next_text;
     }
+    remove_zero_width_segments(segments);
 }
 
 fn shrink_dir_segment(segments: &mut [SegmentContent], columns: usize, separator: &str) {
@@ -244,6 +250,8 @@ fn shrink_dir_segment(segments: &mut [SegmentContent], columns: usize, separator
         return;
     };
 
+    let floor = dir_floor_text(&segments[position].text);
+    let floor_width = width::display_width(floor);
     let other_width = segments
         .iter()
         .enumerate()
@@ -252,7 +260,65 @@ fn shrink_dir_segment(segments: &mut [SegmentContent], columns: usize, separator
         .sum::<usize>();
     let separator_width = separator_total_width(segments, separator);
     let available = columns.saturating_sub(other_width + separator_width);
-    segments[position].text = width::truncate_start(&segments[position].text, available);
+    let max_width = available.max(floor_width);
+    segments[position].text = truncate_dir_text(&segments[position].text, max_width);
+}
+
+fn dir_floor_text(text: &str) -> &str {
+    text.split('/')
+        .rev()
+        .find(|component| !component.is_empty())
+        .unwrap_or(text)
+}
+
+fn truncate_dir_text(text: &str, max_width: usize) -> String {
+    if width::display_width(text) <= max_width {
+        return text.to_string();
+    }
+
+    let floor = dir_floor_text(text);
+    let floor_width = width::display_width(floor);
+    if max_width == floor_width {
+        return floor.to_string();
+    }
+
+    if max_width < floor_width {
+        return width::truncate_start(floor, max_width);
+    }
+
+    width::truncate_start(text, max_width)
+}
+
+fn drop_next_segment(segments: &mut Vec<SegmentContent>) {
+    let Some(position) = segments
+        .iter()
+        .enumerate()
+        .min_by_key(|(index, segment)| (drop_priority(&segment.id), *index))
+        .map(|(index, _segment)| index)
+    else {
+        return;
+    };
+
+    segments.remove(position);
+}
+
+fn drop_priority(id: &str) -> u8 {
+    match id {
+        "rust_version" | "bun_version" | "deno_version" | "node_version" | "python_version" => 0,
+        "duration" | "time" => 1,
+        "aws" | "nix_shell" => 2,
+        "git_status" => 3,
+        "git_branch" => 4,
+        "ssh" | "user_host" => 5,
+        "exit_status" => 6,
+        "dir" => 7,
+        "prompt_char" => 8,
+        _ => 6,
+    }
+}
+
+fn remove_zero_width_segments(segments: &mut Vec<SegmentContent>) {
+    segments.retain(|segment| width::display_width(&segment.text) > 0);
 }
 
 fn side_width(segments: &[SegmentContent], separator: &str) -> usize {
@@ -582,6 +648,38 @@ mod tests {
         assert!(render(&config, &state).prompt.contains(" pure"));
     }
 
+    #[test]
+    fn narrow_fitting_preserves_dir_floor_before_decorative_segments() {
+        let mut segments = vec![
+            test_segment("user_host", "user@host"),
+            test_segment("dir", "~/dev/oss/nova"),
+            test_segment("git_branch", "feature/some-branch"),
+            test_segment("node_version", "24.16.0"),
+        ];
+
+        fit_side(&mut segments, 14, " ");
+
+        assert_eq!(
+            segments
+                .iter()
+                .map(|segment| (segment.id.as_str(), segment.text.as_str()))
+                .collect::<Vec<_>>(),
+            [("user_host", "user@host"), ("dir", "nova")]
+        );
+    }
+
+    #[test]
+    fn fitting_removes_zero_width_segments() {
+        let mut segments = vec![
+            test_segment("dir", ""),
+            test_segment("node_version", "24.16.0"),
+        ];
+
+        fit_side(&mut segments, 1, " ");
+
+        assert_no_zero_width_segments(&segments);
+    }
+
     proptest! {
         #[test]
         fn first_line_never_exceeds_columns(path in "\\PC{0,80}", columns in 1_u16..120) {
@@ -638,6 +736,18 @@ mod tests {
 
             prop_assert!(visible_prompt_width(first_line) <= usize::from(columns));
         }
+    }
+
+    fn test_segment(id: &str, text: &str) -> SegmentContent {
+        SegmentContent::new(id, text, Style::default())
+    }
+
+    fn assert_no_zero_width_segments(segments: &[SegmentContent]) {
+        assert!(
+            segments
+                .iter()
+                .all(|segment| width::display_width(&segment.text) > 0)
+        );
     }
 
     fn visible_prompt_width(input: &str) -> usize {
