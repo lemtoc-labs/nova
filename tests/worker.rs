@@ -27,24 +27,49 @@ fn worker_test_lock() -> MutexGuard<'static, ()> {
         .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
+#[derive(Clone, Copy, Debug)]
+enum WorkerConfig<'a> {
+    IsolatedDefault,
+    File(&'a Path),
+}
+
+fn spawn_worker(runtime_dir: &Path, session_token: &str, config: WorkerConfig<'_>) -> StdCommand {
+    let config_home = runtime_dir.join("config-home");
+    let home = runtime_dir.join("home");
+    fs::create_dir_all(&config_home).expect("config home should be created");
+    fs::create_dir_all(&home).expect("home should be created");
+
+    let mut command = StdCommand::new(cargo_bin("nova"));
+    command
+        .arg("worker")
+        .arg("--dir")
+        .arg(runtime_dir)
+        .arg("--session-token")
+        .arg(session_token)
+        .env("XDG_CONFIG_HOME", &config_home)
+        .env("HOME", &home);
+
+    match config {
+        WorkerConfig::IsolatedDefault => {
+            command.env_remove("NOVA_CONFIG");
+        }
+        WorkerConfig::File(path) => {
+            command.env("NOVA_CONFIG", path);
+        }
+    }
+
+    command
+}
+
 #[test]
 fn worker_renders_prompt_over_fifos() {
     let _guard = worker_test_lock();
     let tempdir = tempfile::tempdir().expect("tempdir should be created");
     let runtime_dir = tempdir.path();
-    let config_home = runtime_dir.join("config-home");
-    fs::create_dir(&config_home).expect("config home should be created");
     create_fifo(runtime_dir.join("req"));
     create_fifo(runtime_dir.join("resp"));
 
-    let mut child = StdCommand::new(cargo_bin("nova"))
-        .arg("worker")
-        .arg("--dir")
-        .arg(runtime_dir)
-        .arg("--session-token")
-        .arg("test-token")
-        .env_remove("NOVA_CONFIG")
-        .env("XDG_CONFIG_HOME", &config_home)
+    let mut child = spawn_worker(runtime_dir, "test-token", WorkerConfig::IsolatedDefault)
         .spawn()
         .expect("worker should spawn");
 
@@ -114,13 +139,7 @@ fn worker_sends_initial_wait_ms_in_handshake() {
     )
     .expect("config should be written");
 
-    let mut child = StdCommand::new(cargo_bin("nova"))
-        .arg("worker")
-        .arg("--dir")
-        .arg(&runtime_dir)
-        .arg("--session-token")
-        .arg("test-token")
-        .env("NOVA_CONFIG", &config_path)
+    let mut child = spawn_worker(&runtime_dir, "test-token", WorkerConfig::File(&config_path))
         .spawn()
         .expect("worker should spawn");
 
@@ -154,12 +173,7 @@ fn worker_sends_update_when_git_status_finishes() {
     fs::write(repo.path().join("staged.txt"), "hello").expect("file should be written");
     run_git(repo.path(), &["add", "staged.txt"]);
 
-    let mut child = StdCommand::new(cargo_bin("nova"))
-        .arg("worker")
-        .arg("--dir")
-        .arg(&runtime_dir)
-        .arg("--session-token")
-        .arg("test-token")
+    let mut child = spawn_worker(&runtime_dir, "test-token", WorkerConfig::IsolatedDefault)
         .spawn()
         .expect("worker should spawn");
 
@@ -236,13 +250,7 @@ fn worker_sends_update_when_rust_version_finishes() {
         bin_dir.to_string_lossy(),
         env::var("PATH").unwrap_or_default()
     );
-    let mut child = StdCommand::new(cargo_bin("nova"))
-        .arg("worker")
-        .arg("--dir")
-        .arg(&runtime_dir)
-        .arg("--session-token")
-        .arg("test-token")
-        .env("NOVA_CONFIG", &config_path)
+    let mut child = spawn_worker(&runtime_dir, "test-token", WorkerConfig::File(&config_path))
         .env("PATH", path)
         .spawn()
         .expect("worker should spawn");
@@ -320,13 +328,7 @@ fn worker_delays_fast_cache_miss_update_until_min_loading_ms() {
         bin_dir.to_string_lossy(),
         env::var("PATH").unwrap_or_default()
     );
-    let mut child = StdCommand::new(cargo_bin("nova"))
-        .arg("worker")
-        .arg("--dir")
-        .arg(&runtime_dir)
-        .arg("--session-token")
-        .arg("test-token")
-        .env("NOVA_CONFIG", &config_path)
+    let mut child = spawn_worker(&runtime_dir, "test-token", WorkerConfig::File(&config_path))
         .env("PATH", path)
         .spawn()
         .expect("worker should spawn");
@@ -406,13 +408,7 @@ fn worker_omits_missing_rust_command_without_update() {
     let missing_bin = tempdir.path().join("missing-bin");
     fs::create_dir(&missing_bin).expect("missing bin dir should be created");
 
-    let mut child = StdCommand::new(cargo_bin("nova"))
-        .arg("worker")
-        .arg("--dir")
-        .arg(&runtime_dir)
-        .arg("--session-token")
-        .arg("test-token")
-        .env("NOVA_CONFIG", &config_path)
+    let mut child = spawn_worker(&runtime_dir, "test-token", WorkerConfig::File(&config_path))
         .spawn()
         .expect("worker should spawn");
 
@@ -492,13 +488,7 @@ fn worker_sends_update_when_node_version_finishes() {
         bin_dir.to_string_lossy(),
         env::var("PATH").unwrap_or_default()
     );
-    let mut child = StdCommand::new(cargo_bin("nova"))
-        .arg("worker")
-        .arg("--dir")
-        .arg(&runtime_dir)
-        .arg("--session-token")
-        .arg("test-token")
-        .env("NOVA_CONFIG", &config_path)
+    let mut child = spawn_worker(&runtime_dir, "test-token", WorkerConfig::File(&config_path))
         .env("PATH", path)
         .spawn()
         .expect("worker should spawn");
@@ -567,13 +557,7 @@ fn worker_uses_request_path_for_node_version() {
     fs::create_dir(&bin_dir).expect("bin dir should be created");
     write_script(&bin_dir, "node", "printf 'v20.0.0\\n'\n");
 
-    let mut child = StdCommand::new(cargo_bin("nova"))
-        .arg("worker")
-        .arg("--dir")
-        .arg(&runtime_dir)
-        .arg("--session-token")
-        .arg("test-token")
-        .env("NOVA_CONFIG", &config_path)
+    let mut child = spawn_worker(&runtime_dir, "test-token", WorkerConfig::File(&config_path))
         .env("PATH", "/usr/bin:/bin")
         .spawn()
         .expect("worker should spawn");
@@ -656,13 +640,7 @@ fn worker_sends_update_when_python_version_finishes() {
         bin_dir.to_string_lossy(),
         env::var("PATH").unwrap_or_default()
     );
-    let mut child = StdCommand::new(cargo_bin("nova"))
-        .arg("worker")
-        .arg("--dir")
-        .arg(&runtime_dir)
-        .arg("--session-token")
-        .arg("test-token")
-        .env("NOVA_CONFIG", &config_path)
+    let mut child = spawn_worker(&runtime_dir, "test-token", WorkerConfig::File(&config_path))
         .env("PATH", path)
         .spawn()
         .expect("worker should spawn");
@@ -731,13 +709,7 @@ fn worker_sends_update_when_python_virtual_env_finishes() {
 
     write_script(&venv_bin, "python", "printf 'Python 3.12.4\\n'\n");
 
-    let mut child = StdCommand::new(cargo_bin("nova"))
-        .arg("worker")
-        .arg("--dir")
-        .arg(&runtime_dir)
-        .arg("--session-token")
-        .arg("test-token")
-        .env("NOVA_CONFIG", &config_path)
+    let mut child = spawn_worker(&runtime_dir, "test-token", WorkerConfig::File(&config_path))
         .spawn()
         .expect("worker should spawn");
 
@@ -821,13 +793,7 @@ fn worker_sends_update_when_bun_version_finishes_and_omits_node_version() {
         bin_dir.to_string_lossy(),
         env::var("PATH").unwrap_or_default()
     );
-    let mut child = StdCommand::new(cargo_bin("nova"))
-        .arg("worker")
-        .arg("--dir")
-        .arg(&runtime_dir)
-        .arg("--session-token")
-        .arg("test-token")
-        .env("NOVA_CONFIG", &config_path)
+    let mut child = spawn_worker(&runtime_dir, "test-token", WorkerConfig::File(&config_path))
         .env("PATH", path)
         .spawn()
         .expect("worker should spawn");
@@ -908,13 +874,7 @@ fn worker_sends_update_when_deno_version_finishes_and_omits_node_version() {
         bin_dir.to_string_lossy(),
         env::var("PATH").unwrap_or_default()
     );
-    let mut child = StdCommand::new(cargo_bin("nova"))
-        .arg("worker")
-        .arg("--dir")
-        .arg(&runtime_dir)
-        .arg("--session-token")
-        .arg("test-token")
-        .env("NOVA_CONFIG", &config_path)
+    let mut child = spawn_worker(&runtime_dir, "test-token", WorkerConfig::File(&config_path))
         .env("PATH", path)
         .spawn()
         .expect("worker should spawn");
@@ -997,13 +957,7 @@ fn worker_invalidates_async_cache_when_config_changes() {
         bin_dir.to_string_lossy(),
         env::var("PATH").unwrap_or_default()
     );
-    let mut child = StdCommand::new(cargo_bin("nova"))
-        .arg("worker")
-        .arg("--dir")
-        .arg(&runtime_dir)
-        .arg("--session-token")
-        .arg("test-token")
-        .env("NOVA_CONFIG", &config_path)
+    let mut child = spawn_worker(&runtime_dir, "test-token", WorkerConfig::File(&config_path))
         .env("PATH", path)
         .spawn()
         .expect("worker should spawn");
@@ -1140,13 +1094,7 @@ exit 1
         bin_dir.to_string_lossy(),
         env::var("PATH").unwrap_or_default()
     );
-    let mut child = StdCommand::new(cargo_bin("nova"))
-        .arg("worker")
-        .arg("--dir")
-        .arg(&runtime_dir)
-        .arg("--session-token")
-        .arg("test-token")
-        .env("NOVA_CONFIG", &config_path)
+    let mut child = spawn_worker(&runtime_dir, "test-token", WorkerConfig::File(&config_path))
         .env("PATH", path)
         .spawn()
         .expect("worker should spawn");
@@ -1266,13 +1214,7 @@ exit 1
         bin_dir.to_string_lossy(),
         env::var("PATH").unwrap_or_default()
     );
-    let mut child = StdCommand::new(cargo_bin("nova"))
-        .arg("worker")
-        .arg("--dir")
-        .arg(&runtime_dir)
-        .arg("--session-token")
-        .arg("test-token")
-        .env("NOVA_CONFIG", &config_path)
+    let mut child = spawn_worker(&runtime_dir, "test-token", WorkerConfig::File(&config_path))
         .env("PATH", path)
         .spawn()
         .expect("worker should spawn");
@@ -1322,13 +1264,7 @@ fn worker_warns_once_and_uses_defaults_for_invalid_config() {
     let config_path = tempdir.path().join("nova.toml");
     fs::write(&config_path, "[layout]\nlines = 3\n").expect("config should be written");
 
-    let mut child = StdCommand::new(cargo_bin("nova"))
-        .arg("worker")
-        .arg("--dir")
-        .arg(&runtime_dir)
-        .arg("--session-token")
-        .arg("test-token")
-        .env("NOVA_CONFIG", &config_path)
+    let mut child = spawn_worker(&runtime_dir, "test-token", WorkerConfig::File(&config_path))
         .stderr(Stdio::piped())
         .spawn()
         .expect("worker should spawn");
@@ -1397,13 +1333,7 @@ fn worker_warns_once_for_unknown_config_segments() {
     )
     .expect("config should be written");
 
-    let mut child = StdCommand::new(cargo_bin("nova"))
-        .arg("worker")
-        .arg("--dir")
-        .arg(&runtime_dir)
-        .arg("--session-token")
-        .arg("test-token")
-        .env("NOVA_CONFIG", &config_path)
+    let mut child = spawn_worker(&runtime_dir, "test-token", WorkerConfig::File(&config_path))
         .stderr(Stdio::piped())
         .spawn()
         .expect("worker should spawn");
