@@ -94,28 +94,20 @@ fn lower_with_separator(rendered: RenderedPrompt, columns: u16, separator: &str)
 
     if line2_left.is_empty() && line2_right.is_empty() {
         let input_line = lower_input_line(&line1_left, columns, separator);
+        let rprompt =
+            lower_input_rprompt(&input_line, &line1_left, &line1_right, columns, separator);
         return LoweredPrompt {
             prompt: input_line.prompt,
-            rprompt: if input_line.wrapped {
-                String::new()
-            } else {
-                lower_side(&line1_right, separator)
-            },
+            rprompt,
         };
     }
 
     let first_line = lower_first_line(&line1_left, &line1_right, columns, separator);
     let second_line = lower_input_line(&line2_left, columns, separator);
     let prompt = format!("{first_line}\n{}", second_line.prompt);
+    let rprompt = lower_input_rprompt(&second_line, &line2_left, &line2_right, columns, separator);
 
-    LoweredPrompt {
-        prompt,
-        rprompt: if second_line.wrapped {
-            String::new()
-        } else {
-            lower_side(&line2_right, separator)
-        },
-    }
+    LoweredPrompt { prompt, rprompt }
 }
 
 fn render_line(
@@ -190,9 +182,7 @@ fn lower_first_line(
     if left_width + right_width > columns {
         let available_for_left = columns.saturating_sub(right_width);
         let lowered_left = lower_truncated_start_side(left, available_for_left, separator);
-        let padding = columns.saturating_sub(
-            width::display_width(&strip_prompt_markers(&lowered_left)) + right_width,
-        );
+        let padding = columns.saturating_sub(visible_prompt_width(&lowered_left) + right_width);
         return format!("{lowered_left}{}{lowered_right}", " ".repeat(padding));
     }
 
@@ -242,6 +232,26 @@ fn lower_input_line(left: &[SegmentContent], columns: usize, separator: &str) ->
     LoweredInputLine {
         prompt: format!("{info_line}\n{prompt_char_line}"),
         wrapped: true,
+    }
+}
+
+fn lower_input_rprompt(
+    input_line: &LoweredInputLine,
+    left: &[SegmentContent],
+    right: &[SegmentContent],
+    columns: usize,
+    separator: &str,
+) -> String {
+    if input_line.wrapped || right.is_empty() {
+        return String::new();
+    }
+
+    let lowered_right = lower_truncated_start_side(right, columns, separator);
+    let right_width = visible_prompt_width(&lowered_right);
+    if right_width == 0 || side_width(left, separator) + right_width > columns {
+        String::new()
+    } else {
+        lowered_right
     }
 }
 
@@ -605,6 +615,12 @@ fn remove_zero_width_segments(segments: &mut Vec<SegmentContent>) {
 }
 
 fn set_segment_text(segment: &mut SegmentContent, text: String) {
+    if segment.uses_parts()
+        && let Some(part) = segment.parts.first()
+    {
+        segment.style = part.style.clone();
+    }
+
     segment.text = text;
     segment.parts.clear();
 }
@@ -712,12 +728,19 @@ fn strip_prompt_markers(input: &str) -> String {
                     break;
                 }
             }
+        } else if character == '%' && chars.peek() == Some(&'%') {
+            chars.next();
+            output.push('%');
         } else {
             output.push(character);
         }
     }
 
     output
+}
+
+fn visible_prompt_width(input: &str) -> usize {
+    width::display_width(&strip_prompt_markers(input))
 }
 
 #[derive(Default)]
@@ -736,7 +759,7 @@ mod tests {
     use super::*;
     use crate::cache::AsyncValue;
     use crate::config::{Config, LayoutConfig, LineConfig};
-    use crate::segments::Style;
+    use crate::segments::{SegmentPart, Style};
     use crate::state::{Keymap, PromptEnv};
 
     #[test]
@@ -848,6 +871,47 @@ mod tests {
         assert!(lines[0].starts_with('…'));
         assert!(lines[0].contains("fix"));
         assert_eq!(lines[1], "❯ ");
+    }
+
+    #[test]
+    fn input_rprompt_is_hidden_when_it_would_collide() {
+        let output = lower(
+            RenderedPrompt {
+                line1_left: vec![test_segment("custom", "left-prompt-that-still-fits-input")],
+                line1_right: vec![test_segment(
+                    "custom",
+                    "right-prompt-that-would-overlap-the-input-prompt",
+                )],
+                line2_left: Vec::new(),
+                line2_right: Vec::new(),
+            },
+            80,
+        );
+
+        assert_eq!(output.prompt, "left-prompt-that-still-fits-input");
+        assert_eq!(output.rprompt, "");
+    }
+
+    #[test]
+    fn oversized_input_rprompt_is_truncated_to_columns() {
+        let output = lower(
+            RenderedPrompt {
+                line1_left: Vec::new(),
+                line1_right: vec![
+                    test_segment("time", "12:34:56"),
+                    test_segment(
+                        "custom",
+                        "right-prompt-that-is-longer-than-the-entire-terminal-width",
+                    ),
+                ],
+                line2_left: Vec::new(),
+                line2_right: Vec::new(),
+            },
+            32,
+        );
+
+        assert!(visible_prompt_width(&output.rprompt) <= 32);
+        assert!(output.rprompt.starts_with('…'));
     }
 
     #[test]
@@ -1276,6 +1340,41 @@ mod tests {
         assert_no_zero_width_segments(&segments);
     }
 
+    #[test]
+    fn fitting_preserves_part_style_when_truncating_segment() {
+        let mut segments = vec![SegmentContent::from_parts(
+            "user_host",
+            vec![
+                SegmentPart::new(
+                    "user",
+                    Style {
+                        fg: Some("green".to_string()),
+                        bg: None,
+                        bold: false,
+                    },
+                ),
+                SegmentPart::new("@host", Style::default()),
+            ],
+        )];
+
+        fit_side(&mut segments, 4, " ");
+
+        assert_eq!(segments[0].style.fg.as_deref(), Some("green"));
+        assert_eq!(
+            lower_side(&segments, " "),
+            "%{\u{1b}[32m%}use…%{\u{1b}[0m%}"
+        );
+    }
+
+    #[test]
+    fn visible_prompt_width_unescapes_literal_percent() {
+        assert_eq!(
+            strip_prompt_markers("%{\u{1b}[32m%}100%%%{\u{1b}[0m%}"),
+            "100%"
+        );
+        assert_eq!(visible_prompt_width("%{\u{1b}[32m%}100%%%{\u{1b}[0m%}"), 4);
+    }
+
     proptest! {
         #[test]
         fn first_line_never_exceeds_columns(path in "\\PC{0,80}", columns in 1_u16..120) {
@@ -1344,26 +1443,5 @@ mod tests {
                 .iter()
                 .all(|segment| width::display_width(&segment.text) > 0)
         );
-    }
-
-    fn visible_prompt_width(input: &str) -> usize {
-        let mut output = String::new();
-        let mut chars = input.chars().peekable();
-
-        while let Some(character) = chars.next() {
-            if character == '%' && chars.peek() == Some(&'{') {
-                chars.next();
-                while let Some(next) = chars.next() {
-                    if next == '%' && chars.peek() == Some(&'}') {
-                        chars.next();
-                        break;
-                    }
-                }
-            } else {
-                output.push(character);
-            }
-        }
-
-        width::display_width(&output.replace("%%", "%"))
     }
 }
