@@ -311,13 +311,14 @@ fn fit_side(segments: &mut Vec<SegmentContent>, columns: usize, separator: &str)
 
 const BRANCH_SOFT_MIN_WIDTH: usize = 10;
 const MIN_COMMAND_COLUMNS: usize = 20;
+const MAX_COMMAND_COLUMNS: usize = 60;
 const COMMAND_COLUMNS_PCT: usize = 50;
 const MIN_INPUT_PROMPT_COLUMNS: usize = 2;
 
 fn command_columns(columns: usize) -> usize {
     let desired = MIN_COMMAND_COLUMNS.max(columns * COMMAND_COLUMNS_PCT / 100);
     let max_reserved = columns.saturating_sub(MIN_INPUT_PROMPT_COLUMNS);
-    desired.min(max_reserved)
+    desired.min(MAX_COMMAND_COLUMNS).min(max_reserved)
 }
 
 fn prompt_columns_for_input(columns: usize) -> usize {
@@ -819,11 +820,15 @@ mod tests {
 
     #[test]
     fn input_prompt_reserves_command_columns() {
+        assert_eq!(command_columns(200), 60);
+        assert_eq!(command_columns(160), 60);
         assert_eq!(command_columns(120), 60);
         assert_eq!(command_columns(80), 40);
         assert_eq!(command_columns(50), 25);
         assert_eq!(command_columns(20), 18);
 
+        assert_eq!(prompt_columns_for_input(200), 140);
+        assert_eq!(prompt_columns_for_input(160), 100);
         assert_eq!(prompt_columns_for_input(120), 60);
         assert_eq!(prompt_columns_for_input(80), 40);
         assert_eq!(prompt_columns_for_input(50), 25);
