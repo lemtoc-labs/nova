@@ -19,6 +19,8 @@ typeset -g _nova_resp_fd=
 typeset -g _nova_worker_pid=
 typeset -g _nova_resp_buffer=
 typeset -g _nova_gen=0
+typeset -g _nova_last_exit_status=0
+typeset -g _nova_last_duration_ms=
 typeset -g _nova_last_applied_gen=0
 typeset -g _nova_reply_applied=0
 typeset -g _nova_reply_status=
@@ -244,6 +246,23 @@ _nova_zle_line_init() {
   _nova_drain_and_redraw
 }
 
+_nova_zle_keymap_select() {
+  emulate -L zsh
+  _nova_ensure_worker || return 0
+
+  (( _nova_gen++ ))
+  _nova_reply_applied=0
+  _nova_reply_status=
+  _nova_send_request "$_nova_last_exit_status" "$_nova_last_duration_ms" || {
+    _nova_mark_dead
+    return 1
+  }
+
+  if zselect -t 1 -r "$_nova_resp_fd" >/dev/null 2>&1; then
+    _nova_drain_and_redraw
+  fi
+}
+
 _nova_preexec() {
   emulate -L zsh
   _nova_cmd_start=${EPOCHREALTIME:-}
@@ -259,6 +278,8 @@ _nova_precmd() {
     elapsed_ms=$(( (EPOCHREALTIME - _nova_cmd_start) * 1000 ))
     duration_ms=$elapsed_ms
   fi
+  _nova_last_exit_status=$exit_status
+  _nova_last_duration_ms=$duration_ms
 
   _nova_ensure_worker || {
     _nova_fallback
@@ -323,3 +344,4 @@ add-zsh-hook preexec _nova_preexec
 add-zsh-hook precmd _nova_precmd
 add-zsh-hook zshexit _nova_cleanup
 add-zle-hook-widget line-init _nova_zle_line_init 2>/dev/null || true
+add-zle-hook-widget keymap-select _nova_zle_keymap_select 2>/dev/null || true

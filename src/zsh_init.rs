@@ -118,6 +118,20 @@ mod tests {
     }
 
     #[test]
+    fn registers_zle_keymap_select_for_vi_prompt_char_updates() {
+        let script = render_init_script_with_session_token(Path::new("/tmp/nova"), "token");
+
+        assert!(script.contains("typeset -g _nova_last_exit_status=0"));
+        assert!(script.contains("typeset -g _nova_last_duration_ms="));
+        assert!(script.contains("_nova_last_exit_status=$exit_status"));
+        assert!(script.contains("_nova_last_duration_ms=$duration_ms"));
+        assert!(script.contains(
+            "_nova_send_request \"$_nova_last_exit_status\" \"$_nova_last_duration_ms\""
+        ));
+        assert!(script.contains("add-zle-hook-widget keymap-select _nova_zle_keymap_select"));
+    }
+
+    #[test]
     fn eagerly_spawns_worker_once_for_interactive_shells() {
         let script = render_init_script_with_session_token(Path::new("/tmp/nova"), "token");
 
