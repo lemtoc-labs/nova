@@ -277,6 +277,7 @@ fn handle_request_chunk(
             state: request.state.clone(),
             config: Arc::clone(&config),
             config_generation: worker_config.generation,
+            status,
             output,
         });
         schedule_async_refreshes(
@@ -298,6 +299,7 @@ struct ActivePrompt {
     state: PromptState,
     config: Arc<Config>,
     config_generation: u64,
+    status: RenderStatus,
     output: LoweredPrompt,
 }
 
@@ -406,10 +408,10 @@ fn write_update_if_active(
         active_prompt.config_generation,
     );
     let output = render_with_async(&active_prompt.config, &active_prompt.state, &async_values);
-    if output == active_prompt.output {
+    let status = render_status(&active_prompt.config, &async_values);
+    if output == active_prompt.output && status == active_prompt.status {
         return Ok(());
     }
-    let status = render_status(&active_prompt.config, &async_values);
 
     write_record(
         response,
@@ -420,6 +422,7 @@ fn write_update_if_active(
         },
     )?;
     active_prompt.output = output;
+    active_prompt.status = status;
     Ok(())
 }
 
@@ -1186,6 +1189,8 @@ mod tests {
         let mut cache = SegmentCache::new(4);
         let initial_values = async_values(&mut cache, &state, &config, config_generation);
         let output = render_with_async(&config, &state, &initial_values);
+        let status = render_status(&config, &initial_values);
+        assert_eq!(status, RenderStatus::Partial);
         assert!(!output.prompt.contains("1.96.1"));
 
         let mut active_prompt = Some(ActivePrompt {
@@ -1193,6 +1198,7 @@ mod tests {
             state,
             config: Arc::new(config),
             config_generation,
+            status,
             output,
         });
         let finished_at = Instant::now();
@@ -1293,7 +1299,8 @@ mod tests {
 
         let initial_values = async_values(&mut cache, &state, &config, config_generation);
         let output = render_with_async(&config, &state, &initial_values);
-        assert_eq!(render_status(&config, &initial_values), RenderStatus::Final);
+        let status = render_status(&config, &initial_values);
+        assert_eq!(status, RenderStatus::Final);
         assert!(output.prompt.contains("1.95.0"));
 
         let mut active_prompt = Some(ActivePrompt {
@@ -1301,6 +1308,7 @@ mod tests {
             state,
             config: Arc::new(config),
             config_generation,
+            status,
             output,
         });
         let finished_at = Instant::now();
@@ -1351,7 +1359,7 @@ mod tests {
     }
 
     #[test]
-    fn empty_job_result_updates_cache_without_changing_output() {
+    fn empty_job_result_sends_final_update_without_changing_output() {
         let tempdir = tempfile::tempdir().expect("tempdir should be created");
         std::fs::write(
             tempdir.path().join("Cargo.toml"),
@@ -1388,12 +1396,15 @@ mod tests {
         let mut cache = SegmentCache::new(4);
         let initial_values = async_values(&mut cache, &state, &config, config_generation);
         let output = render_with_async(&config, &state, &initial_values);
+        let status = render_status(&config, &initial_values);
+        assert_eq!(status, RenderStatus::Partial);
 
         let mut active_prompt = Some(ActivePrompt {
             generation: 2,
             state,
             config: Arc::new(config),
             config_generation,
+            status,
             output: output.clone(),
         });
         let finished_at = Instant::now();
@@ -1423,9 +1434,23 @@ mod tests {
         )
         .expect("job result should be handled");
 
-        assert!(response.is_empty());
+        let encoded = String::from_utf8(response).expect("response should be utf8");
+        let frame = encoded.trim_end_matches('\x1e');
+        let WorkerRecord::Update {
+            generation,
+            status,
+            output: update_output,
+        } = decode_worker_record(frame).expect("update should decode")
+        else {
+            panic!("expected update response");
+        };
+
+        assert_eq!(generation, 2);
+        assert_eq!(status, RenderStatus::Final);
+        assert_eq!(update_output, output);
         let active_prompt = active_prompt.expect("active prompt should remain");
         assert_eq!(active_prompt.output, output);
+        assert_eq!(active_prompt.status, RenderStatus::Final);
         let async_values = async_values(
             &mut cache,
             &active_prompt.state,

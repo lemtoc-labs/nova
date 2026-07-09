@@ -210,6 +210,67 @@ fn worker_sends_update_when_git_status_finishes() {
 }
 
 #[test]
+fn worker_sends_final_update_when_git_status_output_is_unchanged() {
+    let _guard = worker_test_lock();
+    let tempdir = tempfile::tempdir().expect("tempdir should be created");
+    let runtime_dir = tempdir.path().join("runtime");
+    fs::create_dir(&runtime_dir).expect("runtime dir should be created");
+    create_fifo(runtime_dir.join("req"));
+    create_fifo(runtime_dir.join("resp"));
+
+    let repo = tempfile::tempdir().expect("repo tempdir should be created");
+    init_git_repo(repo.path());
+
+    let config_path = tempdir.path().join("nova.toml");
+    fs::write(
+        &config_path,
+        r#"
+        [async]
+        initial_wait_ms = 300
+
+        [layout]
+        lines = 2
+
+        [layout.line1]
+        left = ["dir", "git_status"]
+        right = []
+
+        [layout.line2]
+        left = ["prompt_char"]
+        right = []
+        "#,
+    )
+    .expect("config should be written");
+
+    let mut child = spawn_worker(&runtime_dir, "test-token", WorkerConfig::File(&config_path))
+        .spawn()
+        .expect("worker should spawn");
+
+    let mut request = open_fifo_write(runtime_dir.join("req"));
+    let mut response = WorkerReader::new(open_fifo_read(runtime_dir.join("resp")));
+
+    assert_eq!(
+        read_worker_record(&mut response),
+        WorkerRecord::Handshake {
+            session_token: "test-token".to_string(),
+            initial_wait_ms: 300,
+        }
+    );
+
+    write_render_request(&mut request, 1, repo.path().to_path_buf(), 160);
+    let (first_status, first_output) = read_prompt_response(&mut response, 1);
+    assert_eq!(first_status, RenderStatus::Partial);
+
+    let (update_status, update_output) = read_update_response(&mut response, 1);
+    assert_eq!(update_status, RenderStatus::Final);
+    assert_eq!(update_output, first_output);
+
+    drop(request);
+    drop(response);
+    assert_worker_exits(&mut child);
+}
+
+#[test]
 fn worker_exits_and_removes_runtime_dir_when_parent_is_gone_before_transport_opens() {
     let _guard = worker_test_lock();
     let tempdir = tempfile::tempdir().expect("tempdir should be created");
@@ -399,7 +460,7 @@ fn worker_delays_fast_cache_miss_update_until_min_loading_ms() {
 }
 
 #[test]
-fn worker_omits_missing_rust_command_without_update() {
+fn worker_sends_final_update_when_rust_command_is_missing() {
     let _guard = worker_test_lock();
     let tempdir = tempfile::tempdir().expect("tempdir should be created");
     let runtime_dir = tempdir.path().join("runtime");
@@ -466,7 +527,9 @@ fn worker_omits_missing_rust_command_without_update() {
         first_output.prompt
     );
 
-    assert_no_worker_record(&mut response, Duration::from_millis(200));
+    let (update_status, update_output) = read_update_response(&mut response, 1);
+    assert_eq!(update_status, RenderStatus::Final);
+    assert_eq!(update_output, first_output);
 
     drop(request);
     drop(response);
@@ -1189,7 +1252,7 @@ exit 1
 }
 
 #[test]
-fn worker_omits_initial_git_failure_without_update() {
+fn worker_sends_final_update_when_initial_git_status_fails() {
     let _guard = worker_test_lock();
     let tempdir = tempfile::tempdir().expect("tempdir should be created");
     let runtime_dir = tempdir.path().join("runtime");
@@ -1270,7 +1333,9 @@ exit 1
     );
 
     wait_until(Duration::from_secs(2), || count_path.exists());
-    assert_no_worker_record(&mut response, Duration::from_millis(200));
+    let (update_status, update_output) = read_update_response(&mut response, 1);
+    assert_eq!(update_status, RenderStatus::Final);
+    assert_eq!(update_output, first_output);
 
     drop(request);
     drop(response);
