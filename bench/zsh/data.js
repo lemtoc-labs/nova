@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1783685976112,
+  "lastUpdate": 1783688178820,
   "repoUrl": "https://github.com/lemtoc-labs/nova",
   "entries": {
     "Zsh Interactive Latency": [
@@ -1652,6 +1652,65 @@ window.BENCHMARK_DATA = {
             "range": "1.4 ms",
             "unit": "ms",
             "extra": "median: 21.57 ms\nmin: 20.11 ms\nmax: 25.43 ms\nstddev: 1.4 ms\nruns: 16"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "83203852+lemtoc@users.noreply.github.com",
+            "name": "k.suzuki",
+            "username": "lemtoc"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "7a85cb123122d0c90e06270a4a9b4a10d21079ee",
+          "message": "test(zsh): add interactive E2E harness (#57)\n\n* test(zsh): add interactive E2E harness\n\n- Drive zsh -f through zpty to cover startup, async git redraws, and vi keymaps\n- Verify SIGKILLed shells release their worker process and runtime directory\n- Run the harness in a dedicated CI job and document local usage\n\nCo-authored-by: Codex GPT-5.6 Sol Ultra <noreply@openai.com>\n\n* test(zsh): isolate E2E runtime directory\n\n- Clear inherited XDG_RUNTIME_DIR before starting the child shell\n- Keep worker runtime files under the harness temporary directory on hosted runners\n\nCo-authored-by: Codex GPT-5.6 Sol Ultra <noreply@openai.com>\n\n---------\n\nCo-authored-by: Codex GPT-5.6 Sol Ultra <noreply@openai.com>",
+          "timestamp": "2026-07-10T21:55:28+09:00",
+          "tree_id": "4343bd737a4457742c388576014ad998b3925789",
+          "url": "https://github.com/lemtoc-labs/nova/commit/7a85cb123122d0c90e06270a4a9b4a10d21079ee"
+        },
+        "date": 1783688177738,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "first prompt lag",
+            "value": 29.45,
+            "range": "2.76 ms",
+            "unit": "ms",
+            "extra": "median: 29.45 ms\nmin: 28.41 ms\nmax: 40.6 ms\nstddev: 2.76 ms\nruns: 16"
+          },
+          {
+            "name": "first command lag",
+            "value": 29.59,
+            "range": "2.77 ms",
+            "unit": "ms",
+            "extra": "median: 29.59 ms\nmin: 28.55 ms\nmax: 40.77 ms\nstddev: 2.77 ms\nruns: 16"
+          },
+          {
+            "name": "command lag",
+            "value": 0.57,
+            "range": "0.02 ms",
+            "unit": "ms",
+            "extra": "median: 0.57 ms\nmin: 0.53 ms\nmax: 0.59 ms\nstddev: 0.02 ms\nruns: 16"
+          },
+          {
+            "name": "input lag",
+            "value": 0.72,
+            "range": "0.2 ms",
+            "unit": "ms",
+            "extra": "median: 0.72 ms\nmin: 0.17 ms\nmax: 0.96 ms\nstddev: 0.2 ms\nruns: 16"
+          },
+          {
+            "name": "exit time",
+            "value": 21.35,
+            "range": "0.6 ms",
+            "unit": "ms",
+            "extra": "median: 21.35 ms\nmin: 20.45 ms\nmax: 22.85 ms\nstddev: 0.6 ms\nruns: 16"
           }
         ]
       }
