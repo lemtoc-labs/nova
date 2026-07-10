@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1783688178820,
+  "lastUpdate": 1783689800055,
   "repoUrl": "https://github.com/lemtoc-labs/nova",
   "entries": {
     "Zsh Interactive Latency": [
@@ -1711,6 +1711,65 @@ window.BENCHMARK_DATA = {
             "range": "0.6 ms",
             "unit": "ms",
             "extra": "median: 21.35 ms\nmin: 20.45 ms\nmax: 22.85 ms\nstddev: 0.6 ms\nruns: 16"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "83203852+lemtoc@users.noreply.github.com",
+            "name": "k.suzuki",
+            "username": "lemtoc"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "9e938b472c4b7e899a80e61e10cde766ad4df20d",
+          "message": "refactor(segments): split runtime modules (#58)\n\n- Move each runtime segment and its tests into a focused module.\n- Preserve public exports while sharing detection and command collection helpers.\n\nCo-authored-by: Codex GPT-5.6 Sol Ultra <noreply@openai.com>",
+          "timestamp": "2026-07-10T22:22:26+09:00",
+          "tree_id": "cb46d5ead5e6de044ba35951439ef2912255e974",
+          "url": "https://github.com/lemtoc-labs/nova/commit/9e938b472c4b7e899a80e61e10cde766ad4df20d"
+        },
+        "date": 1783689799021,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "first prompt lag",
+            "value": 30.31,
+            "range": "2.21 ms",
+            "unit": "ms",
+            "extra": "median: 30.31 ms\nmin: 28.08 ms\nmax: 35.84 ms\nstddev: 2.21 ms\nruns: 16"
+          },
+          {
+            "name": "first command lag",
+            "value": 30.45,
+            "range": "2.21 ms",
+            "unit": "ms",
+            "extra": "median: 30.45 ms\nmin: 28.21 ms\nmax: 35.99 ms\nstddev: 2.21 ms\nruns: 16"
+          },
+          {
+            "name": "command lag",
+            "value": 0.58,
+            "range": "0.03 ms",
+            "unit": "ms",
+            "extra": "median: 0.58 ms\nmin: 0.51 ms\nmax: 0.65 ms\nstddev: 0.03 ms\nruns: 16"
+          },
+          {
+            "name": "input lag",
+            "value": 0.58,
+            "range": "0.16 ms",
+            "unit": "ms",
+            "extra": "median: 0.58 ms\nmin: 0.31 ms\nmax: 0.82 ms\nstddev: 0.16 ms\nruns: 16"
+          },
+          {
+            "name": "exit time",
+            "value": 21.71,
+            "range": "3.47 ms",
+            "unit": "ms",
+            "extra": "median: 21.71 ms\nmin: 20.7 ms\nmax: 35.28 ms\nstddev: 3.47 ms\nruns: 16"
           }
         ]
       }
