@@ -740,6 +740,16 @@ fn force_leading_ellipsis(segments: &mut [SegmentContent]) {
     }
 
     let first_width = width::display_width(&first.text);
+    if first_width <= 1 {
+        let style = first
+            .parts
+            .first()
+            .map(|part| part.style.clone())
+            .unwrap_or_else(|| first.style.clone());
+        *first = SegmentContent::new(first.id.clone(), "…", style);
+        return;
+    }
+
     *first = truncate_segment_start(first, first_width.saturating_sub(1));
 }
 
@@ -1639,6 +1649,32 @@ mod tests {
         assert_eq!(
             lower_side(&truncated, " "),
             "%{\u{1b}[32m%}…ef%{\u{1b}[0m%}@host"
+        );
+    }
+
+    #[test]
+    fn leading_ellipsis_preserves_single_cell_segment_style() {
+        let mut segments = vec![
+            SegmentContent::from_parts(
+                "custom",
+                vec![SegmentPart::new(
+                    "x",
+                    Style {
+                        fg: Some("green".to_string()),
+                        bg: None,
+                        bold: false,
+                    },
+                )],
+            ),
+            test_segment("custom", "tail"),
+        ];
+
+        force_leading_ellipsis(&mut segments);
+
+        assert_eq!(segments[0].text, "…");
+        assert_eq!(
+            lower_side(&segments, " "),
+            "%{\u{1b}[32m%}…%{\u{1b}[0m%} tail"
         );
     }
 
