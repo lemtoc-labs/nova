@@ -28,6 +28,12 @@ cargo test
 cargo build
 ```
 
+Run the interactive zsh E2E harness after building Nova:
+
+```sh
+tests/zsh_e2e.zsh
+```
+
 Validate the example config:
 
 ```sh

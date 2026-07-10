@@ -31,3 +31,23 @@ jobs:
         with:
           toolchain: "1.88.0"
       - run: cargo check --locked --all-targets
+
+  zsh-e2e:
+    name: Zsh E2E
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
+        with:
+          toolchain: stable
+      - name: Install zsh
+        run: |
+          if ! command -v zsh >/dev/null 2>&1; then
+            sudo apt-get update
+            sudo apt-get install --yes zsh
+          fi
+      - name: Build Nova
+        run: cargo build --locked
+      - name: Run interactive zsh E2E
+        run: tests/zsh_e2e.zsh
