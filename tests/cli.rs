@@ -264,6 +264,39 @@ fn warns_about_unknown_segments_while_validating_config_files() {
         ));
 }
 
+#[test]
+fn warns_about_unknown_config_keys_and_segment_tables() {
+    let tempdir = tempfile::tempdir().expect("tempdir should be created");
+    let config_path = tempdir.path().join("nova.toml");
+    fs::write(
+        &config_path,
+        r#"
+        [segments.git_status]
+        show_count = true
+
+        [segments.git_staus]
+        style = { fg = "red" }
+        "#,
+    )
+    .expect("config should be written");
+
+    let mut command = Command::cargo_bin("nova").expect("nova binary should build");
+
+    command
+        .arg("check")
+        .arg("--config")
+        .arg(config_path)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("nova: config ok"))
+        .stderr(predicate::str::contains(
+            "nova: warning: unknown config key `segments.git_status.show_count`",
+        ))
+        .stderr(predicate::str::contains(
+            "nova: warning: unknown segment table `segments.git_staus`",
+        ));
+}
+
 fn isolate_prompt_env(command: &mut Command, config_home: &tempfile::TempDir) {
     command
         .env_remove("NOVA_CONFIG")
