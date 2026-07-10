@@ -166,7 +166,7 @@ export NOVA_E2E_BIN=$nova_bin
 export NOVA_E2E_STATE=$state_dir
 export PATH="${nova_bin:h}:$PATH"
 export TERM=xterm-256color
-unset SSH_CLIENT SSH_CONNECTION SSH_TTY
+unset XDG_RUNTIME_DIR SSH_CLIENT SSH_CONNECTION SSH_TTY
 
 zpty -b nova_e2e "$zsh_bin" -f
 pty_fd=$REPLY
