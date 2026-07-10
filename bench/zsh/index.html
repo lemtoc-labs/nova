@@ -348,39 +348,6 @@
           return Number.isFinite(value) ? `${value.toFixed(digits)} ms` : "n/a";
         }
 
-        function latestEntriesByCommit(entries) {
-          const latestByCommit = new Map();
-          const entriesWithoutCommit = [];
-
-          for (const entry of entries || []) {
-            const commitId = entry.commit && entry.commit.id;
-            if (!commitId) {
-              entriesWithoutCommit.push(entry);
-              continue;
-            }
-
-            const previous = latestByCommit.get(commitId);
-            if (!previous || entry.date >= previous.date) {
-              latestByCommit.set(commitId, entry);
-            }
-          }
-
-          return [...entriesWithoutCommit, ...latestByCommit.values()].sort(
-            (left, right) => left.date - right.date,
-          );
-        }
-
-        function buildViewData(rawData) {
-          const entries = Object.fromEntries(
-            Object.entries(rawData.entries || {}).map(([name, values]) => [
-              name,
-              latestEntriesByCommit(values),
-            ]),
-          );
-
-          return { ...rawData, entries };
-        }
-
         function collectBenches(entries) {
           const map = new Map();
           for (const entry of entries || []) {
@@ -621,8 +588,7 @@
         }
 
         function render() {
-          const rawData = window.BENCHMARK_DATA;
-          const data = buildViewData(rawData);
+          const data = window.BENCHMARK_DATA;
           const entries = data.entries["Zsh Interactive Latency"] || [];
           const metricMap = collectBenches(entries);
 
@@ -632,7 +598,7 @@
           repoLink.textContent = data.repoUrl;
 
           document.getElementById("dl-button").onclick = () => {
-            const dataUrl = "data:," + encodeURIComponent(JSON.stringify(rawData, null, 2));
+            const dataUrl = "data:," + encodeURIComponent(JSON.stringify(data, null, 2));
             const anchor = document.createElement("a");
             anchor.href = dataUrl;
             anchor.download = "benchmark_data.json";
