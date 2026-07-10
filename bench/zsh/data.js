@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1783671937575,
+  "lastUpdate": 1783673320055,
   "repoUrl": "https://github.com/lemtoc-labs/nova",
   "entries": {
     "Zsh Interactive Latency": [
@@ -1357,6 +1357,65 @@ window.BENCHMARK_DATA = {
             "range": "1.17 ms",
             "unit": "ms",
             "extra": "median: 21.18 ms\nmin: 20.29 ms\nmax: 25.29 ms\nstddev: 1.17 ms\nruns: 16"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "83203852+lemtoc@users.noreply.github.com",
+            "name": "k.suzuki",
+            "username": "lemtoc"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "a0575d28ffe9acde05294dc3ad3c2f9426d39c93",
+          "message": "fix(bench): deduplicate dashboard points (#52)\n\n- render only the newest dated benchmark result per commit within each suite\n- preserve every benchmark attempt in raw JSON downloads\n\nCo-authored-by: Codex GPT-5.6 Sol Ultra <noreply@openai.com>",
+          "timestamp": "2026-07-10T17:47:49+09:00",
+          "tree_id": "ca05d9ddc00d2a875a33c5759aaf1fc152e71b02",
+          "url": "https://github.com/lemtoc-labs/nova/commit/a0575d28ffe9acde05294dc3ad3c2f9426d39c93"
+        },
+        "date": 1783673318925,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "first prompt lag",
+            "value": 31.34,
+            "range": "3.06 ms",
+            "unit": "ms",
+            "extra": "median: 31.34 ms\nmin: 29.07 ms\nmax: 43.04 ms\nstddev: 3.06 ms\nruns: 16"
+          },
+          {
+            "name": "first command lag",
+            "value": 31.48,
+            "range": "3.05 ms",
+            "unit": "ms",
+            "extra": "median: 31.48 ms\nmin: 29.21 ms\nmax: 43.21 ms\nstddev: 3.05 ms\nruns: 16"
+          },
+          {
+            "name": "command lag",
+            "value": 0.6,
+            "range": "0.06 ms",
+            "unit": "ms",
+            "extra": "median: 0.6 ms\nmin: 0.49 ms\nmax: 0.73 ms\nstddev: 0.06 ms\nruns: 16"
+          },
+          {
+            "name": "input lag",
+            "value": 0.49,
+            "range": "0.2 ms",
+            "unit": "ms",
+            "extra": "median: 0.49 ms\nmin: 0.15 ms\nmax: 0.98 ms\nstddev: 0.2 ms\nruns: 16"
+          },
+          {
+            "name": "exit time",
+            "value": 21.73,
+            "range": "0.98 ms",
+            "unit": "ms",
+            "extra": "median: 21.73 ms\nmin: 20.72 ms\nmax: 25.01 ms\nstddev: 0.98 ms\nruns: 16"
           }
         ]
       }
