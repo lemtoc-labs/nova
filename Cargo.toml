@@ -2,10 +2,14 @@
 name = "nova"
 version = "0.3.1"
 edition = "2024"
+rust-version = "1.88"
 license = "MIT"
+readme = "README.md"
 description = "A fast, customizable zsh prompt renderer."
 homepage = "https://github.com/lemtoc-labs/nova"
 repository = "https://github.com/lemtoc-labs/nova"
+keywords = ["zsh", "prompt", "shell", "terminal", "async"]
+categories = ["command-line-utilities"]
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }
@@ -26,6 +30,10 @@ tempfile = "3"
 [[bench]]
 name = "render"
 harness = false
+
+# Do not set panic = "abort"; worker job isolation in src/worker/jobs.rs relies on catch_unwind.
+[profile.release]
+panic = "unwind"
 
 # The profile that 'dist' will build with
 [profile.dist]
