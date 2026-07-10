@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1783682161099,
+  "lastUpdate": 1783683914659,
   "repoUrl": "https://github.com/lemtoc-labs/nova",
   "entries": {
     "Zsh Interactive Latency": [
@@ -1475,6 +1475,65 @@ window.BENCHMARK_DATA = {
             "range": "1.48 ms",
             "unit": "ms",
             "extra": "median: 22.07 ms\nmin: 20.91 ms\nmax: 26.7 ms\nstddev: 1.48 ms\nruns: 16"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "83203852+lemtoc@users.noreply.github.com",
+            "name": "k.suzuki",
+            "username": "lemtoc"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "cdf4195d7b0498d32fa7c4483c181a15522cb866",
+          "message": "feat(cli): add version and successful prompt help (#54)\n\n- Print the package version for --version and -V and advertise the flags in top-level help\n- Treat prompt --help and -h as successful stdout usage requests\n- Cover aliases, output streams, and exit status with CLI integration tests\n\nCo-authored-by: Codex GPT-5.6 Sol Ultra <noreply@openai.com>",
+          "timestamp": "2026-07-10T20:44:23+09:00",
+          "tree_id": "b24db2cf0f2fdc7ca3b681e30a6e61e207c67541",
+          "url": "https://github.com/lemtoc-labs/nova/commit/cdf4195d7b0498d32fa7c4483c181a15522cb866"
+        },
+        "date": 1783683913670,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "first prompt lag",
+            "value": 29.16,
+            "range": "1.97 ms",
+            "unit": "ms",
+            "extra": "median: 29.16 ms\nmin: 27.51 ms\nmax: 36.73 ms\nstddev: 1.97 ms\nruns: 16"
+          },
+          {
+            "name": "first command lag",
+            "value": 29.29,
+            "range": "1.98 ms",
+            "unit": "ms",
+            "extra": "median: 29.29 ms\nmin: 27.65 ms\nmax: 36.91 ms\nstddev: 1.98 ms\nruns: 16"
+          },
+          {
+            "name": "command lag",
+            "value": 0.56,
+            "range": "0.02 ms",
+            "unit": "ms",
+            "extra": "median: 0.56 ms\nmin: 0.5 ms\nmax: 0.59 ms\nstddev: 0.02 ms\nruns: 16"
+          },
+          {
+            "name": "input lag",
+            "value": 0.59,
+            "range": "0.21 ms",
+            "unit": "ms",
+            "extra": "median: 0.59 ms\nmin: 0.16 ms\nmax: 0.84 ms\nstddev: 0.21 ms\nruns: 16"
+          },
+          {
+            "name": "exit time",
+            "value": 21.14,
+            "range": "1.07 ms",
+            "unit": "ms",
+            "extra": "median: 21.14 ms\nmin: 20.2 ms\nmax: 24.96 ms\nstddev: 1.07 ms\nruns: 16"
           }
         ]
       }
