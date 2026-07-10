@@ -1,0 +1,673 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Nova zsh-bench</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --bg: #f6f8fa;
+        --panel: #ffffff;
+        --text: #24292f;
+        --muted: #57606a;
+        --border: #d0d7de;
+        --blue: #0969da;
+        --green: #1a7f37;
+        --yellow: #9a6700;
+        --orange: #bc4c00;
+        --red: #cf222e;
+        --purple: #8250df;
+        --teal: #1b7c83;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html {
+        background: var(--bg);
+        color: var(--text);
+        font-family:
+          BlinkMacSystemFont,
+          -apple-system,
+          "Segoe UI",
+          Roboto,
+          Helvetica,
+          Arial,
+          sans-serif;
+        font-size: 16px;
+        -webkit-font-smoothing: antialiased;
+      }
+
+      body {
+        margin: 0;
+      }
+
+      a {
+        color: var(--blue);
+        text-decoration: none;
+      }
+
+      a:hover {
+        text-decoration: underline;
+      }
+
+      button {
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        background: var(--panel);
+        color: var(--text);
+        cursor: pointer;
+        font: inherit;
+        padding: 8px 12px;
+      }
+
+      button:hover {
+        border-color: var(--blue);
+        color: var(--blue);
+      }
+
+      .page {
+        margin: 0 auto;
+        max-width: 1280px;
+        padding: 24px;
+      }
+
+      .site-header,
+      .site-footer,
+      .section {
+        background: var(--panel);
+        border: 1px solid var(--border);
+        border-radius: 8px;
+      }
+
+      .site-header {
+        display: grid;
+        gap: 16px;
+        grid-template-columns: minmax(0, 1fr) auto;
+        padding: 20px;
+      }
+
+      .eyebrow {
+        color: var(--muted);
+        font-size: 0.8rem;
+        font-weight: 700;
+        letter-spacing: 0;
+        text-transform: uppercase;
+      }
+
+      h1,
+      h2,
+      h3,
+      p {
+        margin: 0;
+      }
+
+      h1 {
+        font-size: clamp(2rem, 5vw, 3.5rem);
+        line-height: 1.05;
+        margin-top: 4px;
+      }
+
+      h2 {
+        font-size: 1.25rem;
+        line-height: 1.25;
+      }
+
+      h3 {
+        font-size: 1rem;
+        line-height: 1.25;
+      }
+
+      .meta {
+        align-self: start;
+        color: var(--muted);
+        display: grid;
+        font-size: 0.9rem;
+        gap: 4px;
+        justify-items: end;
+      }
+
+      .summary-grid {
+        display: grid;
+        gap: 12px;
+        grid-column: 1 / -1;
+        grid-template-columns: repeat(auto-fit, minmax(min(100%, 150px), 1fr));
+        margin-top: 16px;
+      }
+
+      .summary-note {
+        color: var(--muted);
+        font-size: 0.88rem;
+        grid-column: 1 / -1;
+        line-height: 1.5;
+        margin-top: 0;
+      }
+
+      .summary-note-line {
+        display: block;
+      }
+
+      .metric-card {
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 14px;
+      }
+
+      .metric-card strong {
+        display: block;
+        font-size: 1.7rem;
+        line-height: 1;
+        margin-top: 8px;
+      }
+
+      .metric-card span,
+      .metric-card small {
+        color: var(--muted);
+      }
+
+      .metric-card.good strong {
+        color: var(--green);
+      }
+
+      .metric-card.ok strong {
+        color: var(--yellow);
+      }
+
+      .metric-card.warn strong {
+        color: var(--orange);
+      }
+
+      .metric-card.bad strong {
+        color: var(--red);
+      }
+
+      main {
+        display: grid;
+        gap: 16px;
+        margin-top: 16px;
+      }
+
+      .section {
+        padding: 18px;
+      }
+
+      .section-header {
+        align-items: end;
+        display: flex;
+        gap: 16px;
+        justify-content: space-between;
+        margin-bottom: 14px;
+      }
+
+      .section-description {
+        color: var(--muted);
+        font-size: 0.95rem;
+        margin-top: 4px;
+      }
+
+      .chart-wrap {
+        height: 330px;
+        min-width: 0;
+      }
+
+      .empty-state {
+        border: 1px dashed var(--border);
+        border-radius: 8px;
+        color: var(--muted);
+        padding: 24px;
+        text-align: center;
+      }
+
+      .site-footer {
+        align-items: center;
+        color: var(--muted);
+        display: flex;
+        gap: 16px;
+        justify-content: space-between;
+        margin-top: 16px;
+        padding: 16px 18px;
+      }
+
+      @media (max-width: 760px) {
+        .site-header {
+          grid-template-columns: 1fr;
+        }
+
+        .meta {
+          justify-items: start;
+        }
+      }
+
+      @media (max-width: 560px) {
+        .page {
+          padding: 12px;
+        }
+
+        .section-header,
+        .site-footer {
+          align-items: start;
+          flex-direction: column;
+        }
+      }
+    </style>
+  </head>
+
+  <body>
+    <div class="page">
+      <header class="site-header">
+        <div>
+          <div class="eyebrow">zsh-bench</div>
+          <h1>Nova Benchmarks</h1>
+        </div>
+        <div class="meta">
+          <div><strong>Last Update:</strong> <span id="last-update"></span></div>
+          <div><strong>Repository:</strong> <a id="repository-link" rel="noopener"></a></div>
+        </div>
+        <div id="summary" class="summary-grid"></div>
+        <p class="summary-note">
+          <span class="summary-note-line">
+            Summary targets follow
+            <a rel="noopener" href="https://github.com/romkatv/zsh-bench#how-fast-is-fast"
+              >zsh-bench human-bench thresholds</a
+            >.
+          </span>
+          <span class="summary-note-line">
+            Colors are normalized by each target: green &le; 50%, yellow &le; 100%, orange &le;
+            200%, red &gt; 200%.
+          </span>
+          <span class="summary-note-line">
+            <a rel="noopener" href="https://github.com/romkatv/zsh-bench#what-it-measures"
+              >Exit Time has no perceptual threshold</a
+            >
+            and is shown as a neutral reference.
+          </span>
+        </p>
+      </header>
+
+      <main id="main"></main>
+
+      <footer class="site-footer">
+        <button id="dl-button" type="button">Download data as JSON</button>
+        <span
+          >Powered by
+          <a rel="noopener" href="https://github.com/marketplace/actions/continuous-benchmark"
+            >github-action-benchmark</a
+          ></span
+        >
+      </footer>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@2.9.2/dist/Chart.min.js"></script>
+    <script src="data.js"></script>
+    <script>
+      "use strict";
+
+      (() => {
+        const startupMetricOrder = ["first prompt lag", "first command lag"];
+
+        const interactiveMetricOrder = ["command lag", "input lag"];
+
+        const summaryMetricOrder = [...startupMetricOrder, ...interactiveMetricOrder, "exit time"];
+
+        const metricDetails = {
+          "first prompt lag": {
+            label: "First Prompt",
+            target: 50,
+            color: "#0969da",
+            description: "Terminal open to visible prompt",
+          },
+          "first command lag": {
+            label: "First Command",
+            target: 150,
+            color: "#8250df",
+            description: "Terminal open to first command execution",
+          },
+          "command lag": {
+            label: "Command Lag",
+            target: 10,
+            color: "#cf222e",
+            description: "Enter key to next prompt",
+          },
+          "input lag": {
+            label: "Input Lag",
+            target: 20,
+            color: "#1b7c83",
+            description: "Key press to visible character",
+          },
+          "exit time": {
+            label: "Exit Time",
+            target: null,
+            color: "#57606a",
+            description: "Shell exit reference timing",
+          },
+        };
+
+        function formatMs(value, digits = 1) {
+          return Number.isFinite(value) ? `${value.toFixed(digits)} ms` : "n/a";
+        }
+
+        function latestEntriesByCommit(entries) {
+          const latestByCommit = new Map();
+          const entriesWithoutCommit = [];
+
+          for (const entry of entries || []) {
+            const commitId = entry.commit && entry.commit.id;
+            if (!commitId) {
+              entriesWithoutCommit.push(entry);
+              continue;
+            }
+
+            const previous = latestByCommit.get(commitId);
+            if (!previous || entry.date >= previous.date) {
+              latestByCommit.set(commitId, entry);
+            }
+          }
+
+          return [...entriesWithoutCommit, ...latestByCommit.values()].sort(
+            (left, right) => left.date - right.date,
+          );
+        }
+
+        function buildViewData(rawData) {
+          const entries = Object.fromEntries(
+            Object.entries(rawData.entries || {}).map(([name, values]) => [
+              name,
+              latestEntriesByCommit(values),
+            ]),
+          );
+
+          return { ...rawData, entries };
+        }
+
+        function collectBenches(entries) {
+          const map = new Map();
+          for (const entry of entries || []) {
+            for (const bench of entry.benches || []) {
+              const item = {
+                commit: entry.commit,
+                date: entry.date,
+                tool: entry.tool,
+                bench,
+              };
+              if (!map.has(bench.name)) {
+                map.set(bench.name, []);
+              }
+              map.get(bench.name).push(item);
+            }
+          }
+          return map;
+        }
+
+        function latestValue(series) {
+          return series && series.length > 0 ? series[series.length - 1].bench.value : null;
+        }
+
+        function statusFor(value, target) {
+          if (!Number.isFinite(value) || !target) {
+            return "";
+          }
+          if (value <= target * 0.5) {
+            return "good";
+          }
+          if (value <= target) {
+            return "ok";
+          }
+          if (value <= target * 2) {
+            return "warn";
+          }
+          return "bad";
+        }
+
+        function targetDescription(metricNames) {
+          return metricNames
+            .map((name) => `${metricDetails[name].label} ${metricDetails[name].target} ms`)
+            .join(", ");
+        }
+
+        function makeDataset(metricName, series) {
+          const detail = metricDetails[metricName] || {};
+          return {
+            label: detail.label || metricName,
+            data: series.map((item) => item.bench.value),
+            borderColor: detail.color || "#57606a",
+            backgroundColor: "transparent",
+            borderWidth: 2,
+            pointRadius: 2,
+            pointHoverRadius: 5,
+            lineTension: 0.18,
+            fill: false,
+          };
+        }
+
+        function displaySeries(series, config = {}) {
+          if (!series) {
+            return [];
+          }
+          if (Number.isFinite(config.maxPoints) && config.maxPoints > 0) {
+            return series.slice(-config.maxPoints);
+          }
+          return series;
+        }
+
+        function chartOptions(unit, seriesByMetric, config = {}) {
+          const yTicks = { beginAtZero: true };
+          if (Number.isFinite(config.suggestedMax)) {
+            yTicks.suggestedMax = config.suggestedMax;
+          }
+
+          return {
+            maintainAspectRatio: false,
+            legend: { position: "bottom" },
+            scales: {
+              xAxes: [
+                {
+                  scaleLabel: {
+                    display: true,
+                    labelString: "commit",
+                  },
+                  ticks: {
+                    autoSkip: true,
+                    maxRotation: 45,
+                    minRotation: 0,
+                  },
+                },
+              ],
+              yAxes: [
+                {
+                  scaleLabel: {
+                    display: true,
+                    labelString: unit,
+                  },
+                  ticks: yTicks,
+                },
+              ],
+            },
+            tooltips: {
+              mode: "index",
+              intersect: false,
+              callbacks: {
+                afterTitle: (items) => {
+                  const item = items[0];
+                  const metricName = Object.keys(seriesByMetric)[item.datasetIndex];
+                  const row = seriesByMetric[metricName][item.index];
+                  return (
+                    "\n" +
+                    row.commit.message.split("\n")[0] +
+                    "\n\n" +
+                    row.commit.timestamp +
+                    " committed by @" +
+                    row.commit.committer.username +
+                    "\n"
+                  );
+                },
+                label: (item) => {
+                  const metricName = Object.keys(seriesByMetric)[item.datasetIndex];
+                  const row = seriesByMetric[metricName][item.index];
+                  const range = row.bench.range ? ` (${row.bench.range})` : "";
+                  return `${item.yLabel} ${row.bench.unit}${range}`;
+                },
+                afterLabel: (item) => {
+                  const metricName = Object.keys(seriesByMetric)[item.datasetIndex];
+                  const extra = seriesByMetric[metricName][item.index].bench.extra;
+                  return extra ? "\n" + extra : "";
+                },
+              },
+            },
+            onClick: (_event, activeElems) => {
+              if (activeElems.length === 0) {
+                return;
+              }
+              const elem = activeElems[0];
+              const metricName = Object.keys(seriesByMetric)[elem._datasetIndex];
+              const row = seriesByMetric[metricName][elem._index];
+              window.open(row.commit.url, "_blank");
+            },
+          };
+        }
+
+        function section(title, description) {
+          const element = document.createElement("section");
+          element.className = "section";
+
+          const header = document.createElement("div");
+          header.className = "section-header";
+          element.appendChild(header);
+
+          const text = document.createElement("div");
+          header.appendChild(text);
+
+          const heading = document.createElement("h2");
+          heading.textContent = title;
+          text.appendChild(heading);
+
+          if (description) {
+            const paragraph = document.createElement("p");
+            paragraph.className = "section-description";
+            paragraph.textContent = description;
+            text.appendChild(paragraph);
+          }
+
+          return element;
+        }
+
+        function renderEmpty(parent, message) {
+          const empty = document.createElement("div");
+          empty.className = "empty-state";
+          empty.textContent = message;
+          parent.appendChild(empty);
+        }
+
+        function renderChart(parent, metricMap, metricNames, config = {}) {
+          const available = metricNames.filter(
+            (name) => displaySeries(metricMap.get(name), config).length > 0,
+          );
+          if (available.length === 0) {
+            renderEmpty(parent, "Waiting for the first zsh-bench run.");
+            return;
+          }
+
+          const chartArea = document.createElement("div");
+          chartArea.className = "chart-wrap";
+          parent.appendChild(chartArea);
+
+          const canvas = document.createElement("canvas");
+          chartArea.appendChild(canvas);
+
+          const seriesByMetric = Object.fromEntries(
+            available.map((name) => [name, displaySeries(metricMap.get(name), config)]),
+          );
+          const primarySeries = seriesByMetric[available[0]];
+          const labels = primarySeries.map((row) => row.commit.id.slice(0, 7));
+
+          new Chart(canvas, {
+            type: "line",
+            data: {
+              labels,
+              datasets: available.map((name) => makeDataset(name, seriesByMetric[name])),
+            },
+            options: chartOptions(primarySeries[0].bench.unit, seriesByMetric, config),
+          });
+        }
+
+        function renderSummary(metricMap) {
+          const summary = document.getElementById("summary");
+          summary.textContent = "";
+
+          for (const name of summaryMetricOrder) {
+            const detail = metricDetails[name];
+            const value = latestValue(metricMap.get(name));
+            const card = document.createElement("div");
+            const status = statusFor(value, detail.target);
+            card.className = status ? `metric-card ${status}` : "metric-card";
+
+            const label = document.createElement("span");
+            label.textContent = detail.label;
+            card.appendChild(label);
+
+            const strong = document.createElement("strong");
+            strong.textContent = formatMs(value, 2);
+            card.appendChild(strong);
+
+            const small = document.createElement("small");
+            small.textContent = detail.target
+              ? `${detail.description}; target ${detail.target} ms`
+              : `${detail.description}; reference only`;
+            card.appendChild(small);
+
+            summary.appendChild(card);
+          }
+        }
+
+        function render() {
+          const rawData = window.BENCHMARK_DATA;
+          const data = buildViewData(rawData);
+          const entries = data.entries["Zsh Interactive Latency"] || [];
+          const metricMap = collectBenches(entries);
+
+          document.getElementById("last-update").textContent = new Date(data.lastUpdate).toString();
+          const repoLink = document.getElementById("repository-link");
+          repoLink.href = data.repoUrl;
+          repoLink.textContent = data.repoUrl;
+
+          document.getElementById("dl-button").onclick = () => {
+            const dataUrl = "data:," + encodeURIComponent(JSON.stringify(rawData, null, 2));
+            const anchor = document.createElement("a");
+            anchor.href = dataUrl;
+            anchor.download = "benchmark_data.json";
+            anchor.click();
+          };
+
+          renderSummary(metricMap);
+
+          const main = document.getElementById("main");
+          main.textContent = "";
+
+          const startup = section(
+            "Startup Latency",
+            `Terminal open to prompt readiness and first command execution. Targets: ${targetDescription(startupMetricOrder)}.`,
+          );
+          renderChart(startup, metricMap, startupMetricOrder);
+          main.appendChild(startup);
+
+          const interactive = section(
+            "Interactive Latency",
+            `Recent prompt and keypress responsiveness after startup. Targets: ${targetDescription(interactiveMetricOrder)}.`,
+          );
+          renderChart(interactive, metricMap, interactiveMetricOrder, { maxPoints: 12 });
+          main.appendChild(interactive);
+
+          const exit = section(
+            "Exit Time",
+            "Recorded for continuity, but not used as the main interactive performance signal.",
+          );
+          renderChart(exit, metricMap, ["exit time"]);
+          main.appendChild(exit);
+        }
+
+        render();
+      })();
+    </script>
+  </body>
+</html>
