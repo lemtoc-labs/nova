@@ -24,6 +24,8 @@ pub enum ConfigError {
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum ConfigWarning {
+    UnknownKey { location: String },
+    UnknownSegmentTable { segment: String },
     UnknownLayoutSegment { location: String, segment: String },
     InvalidColor { location: String, color: String },
 }
@@ -31,6 +33,12 @@ pub enum ConfigWarning {
 impl std::fmt::Display for ConfigWarning {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Self::UnknownKey { location } => {
+                write!(formatter, "unknown config key `{location}`")
+            }
+            Self::UnknownSegmentTable { segment } => {
+                write!(formatter, "unknown segment table `segments.{segment}`")
+            }
             Self::UnknownLayoutSegment { location, segment } => {
                 write!(formatter, "unknown segment `{segment}` in `{location}`")
             }

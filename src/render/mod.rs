@@ -1076,6 +1076,7 @@ mod tests {
                 line2: LineConfig::default(),
             },
             segments: Default::default(),
+            unknown_keys: Default::default(),
         };
 
         let output = render(&config, &state);
@@ -1207,6 +1208,7 @@ mod tests {
                 line2: LineConfig::default(),
             },
             segments: Default::default(),
+            unknown_keys: Default::default(),
         };
 
         assert_snapshot!(
@@ -1243,6 +1245,7 @@ mod tests {
                 line2: LineConfig::default(),
             },
             segments: Default::default(),
+            unknown_keys: Default::default(),
         };
         let async_values = AsyncSegmentValues::from([
             (
@@ -1307,6 +1310,7 @@ mod tests {
                 line2: LineConfig::default(),
             },
             segments: Default::default(),
+            unknown_keys: Default::default(),
         };
         let async_values = AsyncSegmentValues::from([
             (
@@ -1416,6 +1420,7 @@ mod tests {
                 line2: LineConfig::default(),
             },
             segments: Default::default(),
+            unknown_keys: Default::default(),
         };
 
         assert!(render(&config, &state).prompt.contains(" pure"));
@@ -1847,6 +1852,7 @@ mod tests {
                     line2: LineConfig::default(),
                 },
                 segments: Default::default(),
+                unknown_keys: Default::default(),
             };
             let output = render(&config, &state);
             let first_line = output.prompt.lines().next().unwrap_or_default();

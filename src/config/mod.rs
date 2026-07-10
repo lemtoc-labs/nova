@@ -16,14 +16,26 @@ pub const DEFAULT_INITIAL_WAIT_MS: u64 = 0;
 pub const DEFAULT_MIN_LOADING_MS: u64 = 50;
 static DEFAULT_SEGMENT_CONFIG: LazyLock<SegmentConfig> = LazyLock::new(SegmentConfig::default);
 
-#[derive(Clone, Debug, Default, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, Deserialize)]
 #[serde(default)]
 pub struct Config {
     #[serde(rename = "async")]
     pub async_config: AsyncConfig,
     pub layout: LayoutConfig,
     pub segments: BTreeMap<String, SegmentConfig>,
+    #[serde(skip)]
+    pub(crate) unknown_keys: BTreeSet<String>,
 }
+
+impl PartialEq for Config {
+    fn eq(&self, other: &Self) -> bool {
+        self.async_config == other.async_config
+            && self.layout == other.layout
+            && self.segments == other.segments
+    }
+}
+
+impl Eq for Config {}
 
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Eq)]
 #[serde(default)]
@@ -81,11 +93,7 @@ pub struct StyleConfig {
 
 impl Config {
     pub fn from_toml(input: &str) -> Result<Self, ConfigError> {
-        let config = toml::from_str::<Self>(input).map_err(|source| ConfigError::Parse {
-            path: Path::new("<inline>").to_path_buf(),
-            source,
-        })?;
-        config.validate()
+        Self::parse(input, Path::new("<inline>"))
     }
 
     pub fn from_path(path: &Path) -> Result<Self, ConfigError> {
@@ -93,10 +101,20 @@ impl Config {
             path: path.to_path_buf(),
             source,
         })?;
-        let config = toml::from_str::<Self>(&input).map_err(|source| ConfigError::Parse {
+        Self::parse(&input, path)
+    }
+
+    fn parse(input: &str, path: &Path) -> Result<Self, ConfigError> {
+        let mut unknown_keys = BTreeSet::new();
+        let deserializer = toml::Deserializer::new(input);
+        let mut config: Self = serde_ignored::deserialize(deserializer, |unknown| {
+            unknown_keys.insert(unknown.to_string());
+        })
+        .map_err(|source| ConfigError::Parse {
             path: path.to_path_buf(),
             source,
         })?;
+        config.unknown_keys = unknown_keys;
         config.validate()
     }
 
@@ -113,7 +131,13 @@ impl Config {
     }
 
     pub fn warnings(&self, known_segment_ids: &[&str]) -> Vec<ConfigWarning> {
-        let mut warnings = Vec::new();
+        let mut warnings = self
+            .unknown_keys
+            .iter()
+            .map(|location| ConfigWarning::UnknownKey {
+                location: location.clone(),
+            })
+            .collect::<Vec<_>>();
         let mut seen = BTreeSet::new();
 
         for (location, segment) in self.layout_segments() {
@@ -125,6 +149,14 @@ impl Config {
                 warnings.push(ConfigWarning::UnknownLayoutSegment {
                     location: location.to_string(),
                     segment: segment.to_string(),
+                });
+            }
+        }
+
+        for segment_id in self.segments.keys() {
+            if !known_segment_ids.contains(&segment_id.as_str()) {
+                warnings.push(ConfigWarning::UnknownSegmentTable {
+                    segment: segment_id.clone(),
                 });
             }
         }
@@ -410,8 +442,10 @@ mod tests {
 
     #[test]
     fn parses_example_config() {
-        Config::from_toml(include_str!("../../examples/config.toml"))
+        let config = Config::from_toml(include_str!("../../examples/config.toml"))
             .expect("example config should parse");
+
+        assert_eq!(config.warnings(TEST_KNOWN_SEGMENTS), []);
     }
 
     #[test]
@@ -423,6 +457,81 @@ mod tests {
             error,
             ConfigError::InvalidLayoutLines { lines: 3 }
         ));
+    }
+
+    #[test]
+    fn preserves_source_spans_for_invalid_config_values() {
+        let error = Config::from_toml("[layout]\nlines = \"two\"\n")
+            .expect_err("invalid value should fail");
+        let ConfigError::Parse { source, .. } = error else {
+            panic!("invalid value should produce a parse error");
+        };
+
+        assert!(source.span().is_some());
+    }
+
+    #[test]
+    fn warns_about_unknown_config_keys_and_segment_tables() {
+        let config = Config::from_toml(
+            r#"
+            unexpected = true
+
+            [async]
+            initial_wait = 10
+
+            [layout]
+            lines = 1
+            seperator = " "
+
+            [layout.line1]
+            left = ["dir"]
+            right = []
+            middle = []
+
+            [segments.git_status]
+            show_count = true
+            icons = { custom = "x" }
+            style = { fg = "red", foreground = "blue" }
+
+            [segments.git_staus]
+            style = { fg = "red" }
+
+            [segments.time]
+            max_components = 2
+            "#,
+        )
+        .expect("config should parse");
+
+        assert_eq!(
+            config.warnings(TEST_KNOWN_SEGMENTS),
+            [
+                ConfigWarning::UnknownKey {
+                    location: "async.initial_wait".to_string(),
+                },
+                ConfigWarning::UnknownKey {
+                    location: "layout.line1.middle".to_string(),
+                },
+                ConfigWarning::UnknownKey {
+                    location: "layout.seperator".to_string(),
+                },
+                ConfigWarning::UnknownKey {
+                    location: "segments.git_status.show_count".to_string(),
+                },
+                ConfigWarning::UnknownKey {
+                    location: "segments.git_status.style.foreground".to_string(),
+                },
+                ConfigWarning::UnknownKey {
+                    location: "unexpected".to_string(),
+                },
+                ConfigWarning::UnknownSegmentTable {
+                    segment: "git_staus".to_string(),
+                },
+            ]
+        );
+        assert_eq!(
+            Config::from_toml("unexpected = true").expect("unknown key should remain valid"),
+            Config::default()
+        );
     }
 
     #[test]

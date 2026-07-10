@@ -1397,7 +1397,7 @@ fn worker_warns_once_and_uses_defaults_for_invalid_config() {
 }
 
 #[test]
-fn worker_warns_once_for_unknown_config_segments() {
+fn worker_warns_once_for_config_warnings() {
     let _guard = worker_test_lock();
     let tempdir = tempfile::tempdir().expect("tempdir should be created");
     let runtime_dir = tempdir.path().join("runtime");
@@ -1419,6 +1419,12 @@ fn worker_warns_once_for_unknown_config_segments() {
         [layout.line2]
         left = ["prompt_char"]
         right = []
+
+        [segments.git_status]
+        show_count = true
+
+        [segments.git_staus]
+        style = { fg = "red" }
         "#,
     )
     .expect("config should be written");
@@ -1463,6 +1469,18 @@ fn worker_warns_once_for_unknown_config_segments() {
     assert_eq!(
         stderr
             .matches("nova: warning: unknown segment `missing` in `layout.line1.left`")
+            .count(),
+        1
+    );
+    assert_eq!(
+        stderr
+            .matches("nova: warning: unknown config key `segments.git_status.show_count`")
+            .count(),
+        1
+    );
+    assert_eq!(
+        stderr
+            .matches("nova: warning: unknown segment table `segments.git_staus`")
             .count(),
         1
     );
