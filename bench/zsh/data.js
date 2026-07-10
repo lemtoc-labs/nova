@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1783591785389,
+  "lastUpdate": 1783671937575,
   "repoUrl": "https://github.com/lemtoc-labs/nova",
   "entries": {
     "Zsh Interactive Latency": [
@@ -1298,6 +1298,65 @@ window.BENCHMARK_DATA = {
             "range": "0.43 ms",
             "unit": "ms",
             "extra": "median: 20.72 ms\nmin: 20 ms\nmax: 21.69 ms\nstddev: 0.43 ms\nruns: 16"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "83203852+lemtoc@users.noreply.github.com",
+            "name": "k.suzuki",
+            "username": "lemtoc"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "eac6676f828f501937fbc35a743213a4667efc94",
+          "message": "fix(render): prioritize narrow prompt segments (#51)\n\n* fix(render): preserve dir when fitting narrow prompts\n\n- Keep the directory segment at least at its last path component while fitting.\n- Drop overflowing segments by built-in importance instead of tail position.\n- Remove zero-width fitted segments so they do not leave separator gaps.\n\nCo-authored-by: Codex GPT-5.5 <noreply@openai.com>\n\n* fix(render): fit narrow prompts without dropping segments\n\n- Preserve all rendered segments during fitting instead of dropping low-priority prompt data\n- Compact only truncatable content: dir paths, branch labels, git status counts, and runtime labels\n- Reserve command input space before deciding whether an input prompt still fits on one line\n- Ellipsize the left side fish-style when fitted prompt content still exceeds the input budget\n- Move prompt_char onto the final input line so the prompt remains usable even in narrow terminals\n- Hide rprompt only when the input prompt wraps, avoiding overlap with the guaranteed input line\n\nCo-authored-by: Codex GPT-5.5 <noreply@openai.com>\n\n* fix(render): guard input rprompt fitting\n\n- Hide input rprompt when it would collide with the left prompt\n\n- Truncate oversized input rprompt content to the terminal width before lowering\n\n- Preserve part-derived styles when truncating multipart segments\n\n- Treat escaped percent markers as literal percent signs in visible width calculations\n\nCo-authored-by: Codex GPT-5.5 <noreply@openai.com>\n\n* fix(render): cap command input reservation\n\n- Limit command input reservation to 60 columns on wide terminals\n\n- Keep the existing 50 percent reservation behavior through 120 columns\n\n- Cover wide terminal prompt budget calculations in the render tests\n\nCo-authored-by: Codex GPT-5.5 <noreply@openai.com>\n\n* fix(render): prioritize narrow prompt segments\n\n- fit line segments to their actual available width and reserve space before line1 right prompts\n- hide narrow line1 right prompts and preserve primary git context before secondary runtime data\n- retain multipart segment styles when truncating rendered prompt text\n\nCo-authored-by: Codex GPT-5.6 Terra Xhigh <noreply@openai.com>\n\n* fix(render): preserve single-cell ellipsis\n\n- keep the omission marker visible when the first retained segment occupies one display cell\n- preserve multipart segment styling when replacing that cell with an ellipsis\n\nCo-authored-by: Codex GPT-5.6 Sol Ultra <noreply@openai.com>\n\n* fix(render): guarantee aligned side widths\n\n- truncate the widest non-prompt left segment until it fits the assigned columns\n- preserve rightmost right-prompt context and wrapped prompt-char input lines\n- cover mixed custom segments and align fitting test names\n\nCo-authored-by: Codex GPT-5.6 Sol Ultra <noreply@openai.com>\n\n* refactor(render): clarify non-prompt truncation\n\n- name the widest-segment fallback after its non-prompt contract\n- remove the unreachable prompt-char fallback and match branch\n\nCo-authored-by: Codex GPT-5.6 Sol Ultra <noreply@openai.com>\n\n---------\n\nCo-authored-by: Codex GPT-5.5 <noreply@openai.com>",
+          "timestamp": "2026-07-10T17:03:36+09:00",
+          "tree_id": "6551ae42987485aa0597245613ad4a8fd37ccba8",
+          "url": "https://github.com/lemtoc-labs/nova/commit/eac6676f828f501937fbc35a743213a4667efc94"
+        },
+        "date": 1783671936429,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "first prompt lag",
+            "value": 30.58,
+            "range": "3.01 ms",
+            "unit": "ms",
+            "extra": "median: 30.58 ms\nmin: 26.82 ms\nmax: 41.79 ms\nstddev: 3.01 ms\nruns: 16"
+          },
+          {
+            "name": "first command lag",
+            "value": 30.71,
+            "range": "3.02 ms",
+            "unit": "ms",
+            "extra": "median: 30.71 ms\nmin: 26.94 ms\nmax: 41.95 ms\nstddev: 3.02 ms\nruns: 16"
+          },
+          {
+            "name": "command lag",
+            "value": 0.58,
+            "range": "0.02 ms",
+            "unit": "ms",
+            "extra": "median: 0.58 ms\nmin: 0.54 ms\nmax: 0.62 ms\nstddev: 0.02 ms\nruns: 16"
+          },
+          {
+            "name": "input lag",
+            "value": 0.4,
+            "range": "0.18 ms",
+            "unit": "ms",
+            "extra": "median: 0.4 ms\nmin: 0.28 ms\nmax: 0.85 ms\nstddev: 0.18 ms\nruns: 16"
+          },
+          {
+            "name": "exit time",
+            "value": 21.18,
+            "range": "1.17 ms",
+            "unit": "ms",
+            "extra": "median: 21.18 ms\nmin: 20.29 ms\nmax: 25.29 ms\nstddev: 1.17 ms\nruns: 16"
           }
         ]
       }
