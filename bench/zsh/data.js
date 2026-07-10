@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1783673320055,
+  "lastUpdate": 1783682161099,
   "repoUrl": "https://github.com/lemtoc-labs/nova",
   "entries": {
     "Zsh Interactive Latency": [
@@ -1416,6 +1416,65 @@ window.BENCHMARK_DATA = {
             "range": "0.98 ms",
             "unit": "ms",
             "extra": "median: 21.73 ms\nmin: 20.72 ms\nmax: 25.01 ms\nstddev: 0.98 ms\nruns: 16"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "83203852+lemtoc@users.noreply.github.com",
+            "name": "k.suzuki",
+            "username": "lemtoc"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "7e9127a65c8937831409b12e001d6bc8583a5120",
+          "message": "chore(release): bump version to 0.3.1 (#53)\n\n- Update Cargo metadata and lockfile to 0.3.1\n- Align the Nix package version with the release version\n- Prepare the next cargo-dist release tag\n\nCo-authored-by: Codex GPT-5.6 Sol Ultra <noreply@openai.com>",
+          "timestamp": "2026-07-10T20:15:09+09:00",
+          "tree_id": "6846b56ef6959986497b570fd04fc45e7eff7893",
+          "url": "https://github.com/lemtoc-labs/nova/commit/7e9127a65c8937831409b12e001d6bc8583a5120"
+        },
+        "date": 1783682160071,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "first prompt lag",
+            "value": 29.84,
+            "range": "2.12 ms",
+            "unit": "ms",
+            "extra": "median: 29.84 ms\nmin: 27.76 ms\nmax: 36.61 ms\nstddev: 2.12 ms\nruns: 16"
+          },
+          {
+            "name": "first command lag",
+            "value": 29.98,
+            "range": "2.14 ms",
+            "unit": "ms",
+            "extra": "median: 29.98 ms\nmin: 27.93 ms\nmax: 36.86 ms\nstddev: 2.14 ms\nruns: 16"
+          },
+          {
+            "name": "command lag",
+            "value": 0.57,
+            "range": "0.03 ms",
+            "unit": "ms",
+            "extra": "median: 0.57 ms\nmin: 0.51 ms\nmax: 0.6 ms\nstddev: 0.03 ms\nruns: 16"
+          },
+          {
+            "name": "input lag",
+            "value": 0.58,
+            "range": "0.15 ms",
+            "unit": "ms",
+            "extra": "median: 0.58 ms\nmin: 0.33 ms\nmax: 0.85 ms\nstddev: 0.15 ms\nruns: 16"
+          },
+          {
+            "name": "exit time",
+            "value": 22.07,
+            "range": "1.48 ms",
+            "unit": "ms",
+            "extra": "median: 22.07 ms\nmin: 20.91 ms\nmax: 26.7 ms\nstddev: 1.48 ms\nruns: 16"
           }
         ]
       }
