@@ -6,9 +6,44 @@ use std::fs;
 fn prints_help_without_a_command() {
     let mut command = Command::cargo_bin("nova").expect("nova binary should build");
 
-    command.assert().success().stdout(predicate::str::contains(
-        "Usage: nova <init|worker|prompt|check>",
-    ));
+    command
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "Usage: nova <init|worker|prompt|check>",
+        ))
+        .stdout(predicate::str::contains("-V, --version"));
+}
+
+#[test]
+fn prints_version_from_long_and_short_flags() {
+    let expected = format!("nova {}\n", env!("CARGO_PKG_VERSION"));
+
+    for flag in ["--version", "-V"] {
+        let mut command = Command::cargo_bin("nova").expect("nova binary should build");
+
+        command
+            .arg(flag)
+            .assert()
+            .success()
+            .stdout(expected.clone())
+            .stderr(predicate::str::is_empty());
+    }
+}
+
+#[test]
+fn prints_prompt_help_successfully() {
+    for flag in ["--help", "-h"] {
+        let mut command = Command::cargo_bin("nova").expect("nova binary should build");
+
+        command
+            .arg("prompt")
+            .arg(flag)
+            .assert()
+            .success()
+            .stdout(predicate::str::contains("Usage: nova prompt"))
+            .stderr(predicate::str::is_empty());
+    }
 }
 
 #[test]

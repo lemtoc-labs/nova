@@ -12,6 +12,8 @@ use nova::state::{Keymap, PromptState};
 use nova::worker::{WorkerOptions, run as run_worker_loop};
 use nova::zsh_init::render_init_script;
 
+const PROMPT_USAGE: &str = "Usage: nova prompt [--cwd PATH] [--cols N] [--exit N] [--duration-ms N] [--time HH:MM:SS] [--keymap KEYMAP] [--config PATH] [--format plain|preview|shell]";
+
 fn main() -> ExitCode {
     let args = env::args().skip(1).collect::<Vec<_>>();
     match args.first().map(String::as_str) {
@@ -19,6 +21,10 @@ fn main() -> ExitCode {
         Some("prompt") => run_prompt(&args[1..]),
         Some("check") => run_check(&args[1..]),
         Some("worker") => run_worker(&args[1..]),
+        Some("--version") | Some("-V") => {
+            println!("nova {}", env!("CARGO_PKG_VERSION"));
+            ExitCode::SUCCESS
+        }
         Some("--help") | Some("-h") | None => {
             print_help();
             ExitCode::SUCCESS
@@ -59,6 +65,14 @@ fn run_init(args: &[String]) -> ExitCode {
 }
 
 fn run_prompt(args: &[String]) -> ExitCode {
+    if args
+        .iter()
+        .any(|arg| matches!(arg.as_str(), "--help" | "-h"))
+    {
+        println!("{PROMPT_USAGE}");
+        return ExitCode::SUCCESS;
+    }
+
     match PromptArgs::parse(args).and_then(|args| args.render()) {
         Ok(output) => {
             print!("{output}");
@@ -88,7 +102,9 @@ fn run_check(args: &[String]) -> ExitCode {
 }
 
 fn print_help() {
-    println!("Usage: nova <init|worker|prompt|check>");
+    println!(
+        "Usage: nova <init|worker|prompt|check>\n\nOptions:\n  -h, --help     Print help\n  -V, --version  Print version"
+    );
 }
 
 #[derive(Clone, Debug)]
@@ -159,9 +175,6 @@ impl PromptArgs {
                 "--format" => {
                     parsed.format = PromptFormat::parse(required_value(args, index, "--format")?)?;
                     index += 2;
-                }
-                "--help" | "-h" => {
-                    return Err("usage: nova prompt [--cwd PATH] [--cols N] [--exit N] [--duration-ms N] [--time HH:MM:SS] [--keymap KEYMAP] [--config PATH] [--format plain|preview|shell]".to_string());
                 }
                 option => return Err(format!("unknown prompt option `{option}`")),
             }
