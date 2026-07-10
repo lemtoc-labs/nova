@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1783683914659,
+  "lastUpdate": 1783685078190,
   "repoUrl": "https://github.com/lemtoc-labs/nova",
   "entries": {
     "Zsh Interactive Latency": [
@@ -1534,6 +1534,65 @@ window.BENCHMARK_DATA = {
             "range": "1.07 ms",
             "unit": "ms",
             "extra": "median: 21.14 ms\nmin: 20.2 ms\nmax: 24.96 ms\nstddev: 1.07 ms\nruns: 16"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "83203852+lemtoc@users.noreply.github.com",
+            "name": "k.suzuki",
+            "username": "lemtoc"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "8766502c1b4cc88f67b6d491c234cdd57a640fdb",
+          "message": "feat(config): warn about unknown keys and segment tables (#55)\n\n- Capture ignored Serde field paths as warnings while preserving forward-compatible parsing and source spans\n- Flag unknown segment configuration tables without treating diagnostics as effective config changes\n- Cover nova check output, worker warning deduplication, dynamic maps, and inapplicable known keys\n\nCo-authored-by: Codex GPT-5.6 Sol Ultra <noreply@openai.com>",
+          "timestamp": "2026-07-10T21:03:47+09:00",
+          "tree_id": "cbccd2abc375d6546ce752ab8e865aa0e66bdbc0",
+          "url": "https://github.com/lemtoc-labs/nova/commit/8766502c1b4cc88f67b6d491c234cdd57a640fdb"
+        },
+        "date": 1783685077144,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "first prompt lag",
+            "value": 30,
+            "range": "2.63 ms",
+            "unit": "ms",
+            "extra": "median: 30 ms\nmin: 26.01 ms\nmax: 38.84 ms\nstddev: 2.63 ms\nruns: 16"
+          },
+          {
+            "name": "first command lag",
+            "value": 30.14,
+            "range": "2.65 ms",
+            "unit": "ms",
+            "extra": "median: 30.14 ms\nmin: 26.13 ms\nmax: 39.08 ms\nstddev: 2.65 ms\nruns: 16"
+          },
+          {
+            "name": "command lag",
+            "value": 0.59,
+            "range": "0.05 ms",
+            "unit": "ms",
+            "extra": "median: 0.59 ms\nmin: 0.51 ms\nmax: 0.71 ms\nstddev: 0.05 ms\nruns: 16"
+          },
+          {
+            "name": "input lag",
+            "value": 0.43,
+            "range": "0.22 ms",
+            "unit": "ms",
+            "extra": "median: 0.43 ms\nmin: 0.24 ms\nmax: 0.99 ms\nstddev: 0.22 ms\nruns: 16"
+          },
+          {
+            "name": "exit time",
+            "value": 22.43,
+            "range": "1.83 ms",
+            "unit": "ms",
+            "extra": "median: 22.43 ms\nmin: 20.57 ms\nmax: 28.11 ms\nstddev: 1.83 ms\nruns: 16"
           }
         ]
       }
