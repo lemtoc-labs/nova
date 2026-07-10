@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1783685078190,
+  "lastUpdate": 1783685976112,
   "repoUrl": "https://github.com/lemtoc-labs/nova",
   "entries": {
     "Zsh Interactive Latency": [
@@ -1593,6 +1593,65 @@ window.BENCHMARK_DATA = {
             "range": "1.83 ms",
             "unit": "ms",
             "extra": "median: 22.43 ms\nmin: 20.57 ms\nmax: 28.11 ms\nstddev: 1.83 ms\nruns: 16"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "83203852+lemtoc@users.noreply.github.com",
+            "name": "k.suzuki",
+            "username": "lemtoc"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "9ce8bf33f62477b072b93dab9024c93e1251d955",
+          "message": "chore(cargo): declare MSRV and release metadata (#56)\n\n- Declare Rust 1.88 and package discovery metadata\n- Keep release and dist builds on panic unwinding and guard worker isolation\n- Check all targets on Rust 1.88 in CI\n\nCo-authored-by: Codex GPT-5.6 Sol Ultra <noreply@openai.com>",
+          "timestamp": "2026-07-10T21:18:44+09:00",
+          "tree_id": "c03da3f3647116586296ad85ef2d03e2d05c84ce",
+          "url": "https://github.com/lemtoc-labs/nova/commit/9ce8bf33f62477b072b93dab9024c93e1251d955"
+        },
+        "date": 1783685975006,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "first prompt lag",
+            "value": 29.79,
+            "range": "2.95 ms",
+            "unit": "ms",
+            "extra": "median: 29.79 ms\nmin: 24.01 ms\nmax: 36.49 ms\nstddev: 2.95 ms\nruns: 16"
+          },
+          {
+            "name": "first command lag",
+            "value": 29.95,
+            "range": "2.96 ms",
+            "unit": "ms",
+            "extra": "median: 29.95 ms\nmin: 24.14 ms\nmax: 36.65 ms\nstddev: 2.96 ms\nruns: 16"
+          },
+          {
+            "name": "command lag",
+            "value": 0.58,
+            "range": "0.01 ms",
+            "unit": "ms",
+            "extra": "median: 0.58 ms\nmin: 0.55 ms\nmax: 0.61 ms\nstddev: 0.01 ms\nruns: 16"
+          },
+          {
+            "name": "input lag",
+            "value": 0.58,
+            "range": "0.17 ms",
+            "unit": "ms",
+            "extra": "median: 0.58 ms\nmin: 0.19 ms\nmax: 0.8 ms\nstddev: 0.17 ms\nruns: 16"
+          },
+          {
+            "name": "exit time",
+            "value": 21.57,
+            "range": "1.4 ms",
+            "unit": "ms",
+            "extra": "median: 21.57 ms\nmin: 20.11 ms\nmax: 25.43 ms\nstddev: 1.4 ms\nruns: 16"
           }
         ]
       }
