@@ -322,7 +322,7 @@ fn fit_aligned_side(
                 break;
             }
             SideAlignment::Left => {
-                if !truncate_widest_segment_to_fit(segments, columns, separator) {
+                if !truncate_widest_non_prompt_segment_to_fit(segments, columns, separator) {
                     break;
                 }
                 remove_zero_width_segments(segments);
@@ -348,7 +348,7 @@ fn truncate_first_segment(segments: &mut [SegmentContent], columns: usize) {
     }
 }
 
-fn truncate_widest_segment_to_fit(
+fn truncate_widest_non_prompt_segment_to_fit(
     segments: &mut [SegmentContent],
     columns: usize,
     separator: &str,
@@ -363,12 +363,6 @@ fn truncate_widest_segment_to_fit(
         .enumerate()
         .filter(|(_index, segment)| segment.id != "prompt_char")
         .max_by_key(|(_index, segment)| width::display_width(&segment.text))
-        .or_else(|| {
-            segments
-                .iter()
-                .enumerate()
-                .max_by_key(|(_index, segment)| width::display_width(&segment.text))
-        })
         .map(|(index, _segment)| index);
     let Some(position) = position else {
         return false;
@@ -383,12 +377,6 @@ fn truncate_widest_segment_to_fit(
         "dir" => set_segment_text(segment, truncate_dir_text(&segment.text, target_width)),
         "git_branch" => {
             set_segment_text(segment, truncate_branch_text(&segment.text, target_width));
-        }
-        "prompt_char" => {
-            set_segment_text(
-                segment,
-                truncate_prompt_char_text(&segment.text, target_width),
-            );
         }
         _ => truncate_segment_end(segment, target_width),
     }
