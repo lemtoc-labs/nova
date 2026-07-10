@@ -7,7 +7,7 @@ use std::collections::BTreeMap;
 
 use crate::cache::AsyncValue;
 use crate::config::{Config, LineConfig, SegmentConfig};
-use crate::segments::{SegmentContent, Style, render_sync_segment};
+use crate::segments::{SegmentContent, SegmentPart, Style, render_sync_segment};
 use crate::state::PromptState;
 
 pub type AsyncSegmentValues = BTreeMap<String, AsyncValue>;
@@ -89,10 +89,10 @@ fn lower_with_separator(rendered: RenderedPrompt, columns: u16, separator: &str)
     let mut line2_left = rendered.line2_left;
     let mut line2_right = rendered.line2_right;
 
-    fit_prompt_line(&mut line1_left, &mut line1_right, columns, separator);
     fit_prompt_line(&mut line2_left, &mut line2_right, columns, separator);
 
     if line2_left.is_empty() && line2_right.is_empty() {
+        fit_prompt_line(&mut line1_left, &mut line1_right, columns, separator);
         let input_line = lower_input_line(&line1_left, columns, separator);
         let rprompt =
             lower_input_rprompt(&input_line, &line1_left, &line1_right, columns, separator);
@@ -102,7 +102,8 @@ fn lower_with_separator(rendered: RenderedPrompt, columns: u16, separator: &str)
         };
     }
 
-    let first_line = lower_first_line(&line1_left, &line1_right, columns, separator);
+    fit_side(&mut line1_right, columns, separator);
+    let first_line = lower_first_line(&mut line1_left, &line1_right, columns, separator);
     let second_line = lower_input_line(&line2_left, columns, separator);
     let prompt = format!("{first_line}\n{}", second_line.prompt);
     let rprompt = lower_input_rprompt(&second_line, &line2_left, &line2_right, columns, separator);
@@ -165,30 +166,28 @@ fn async_value_content(
 }
 
 fn lower_first_line(
-    left: &[SegmentContent],
+    left: &mut Vec<SegmentContent>,
     right: &[SegmentContent],
     columns: usize,
     separator: &str,
 ) -> String {
-    let lowered_left = lower_side(left, separator);
     let lowered_right = lower_side(right, separator);
 
-    if right.is_empty() {
+    if right.is_empty() || columns < MIN_LINE_RIGHT_COLUMNS {
+        fit_side(left, columns, separator);
         return lower_truncated_start_side(left, columns, separator);
     }
 
-    let left_width = side_width(left, separator);
     let right_width = side_width(right, separator);
-    if left_width + right_width > columns {
-        let available_for_left = columns.saturating_sub(right_width);
-        let lowered_left = lower_truncated_start_side(left, available_for_left, separator);
-        let padding = columns.saturating_sub(visible_prompt_width(&lowered_left) + right_width);
-        return format!("{lowered_left}{}{lowered_right}", " ".repeat(padding));
-    }
-
-    let padding = columns.saturating_sub(left_width + right_width);
+    let available_for_left = columns.saturating_sub(right_width + MIN_LINE_RIGHT_GAP);
+    fit_side(left, available_for_left, separator);
+    let lowered_left = lower_truncated_start_side(left, available_for_left, separator);
+    let padding = columns.saturating_sub(visible_prompt_width(&lowered_left) + right_width);
     format!("{lowered_left}{}{lowered_right}", " ".repeat(padding))
 }
+
+const MIN_LINE_RIGHT_GAP: usize = 1;
+const MIN_LINE_RIGHT_COLUMNS: usize = 50;
 
 struct LoweredInputLine {
     prompt: String,
@@ -282,10 +281,12 @@ fn fit_side(segments: &mut Vec<SegmentContent>, columns: usize, separator: &str)
     }
 
     while side_width(segments, separator) > columns {
-        if compact_dir_segment(segments)
-            || shrink_branch_segment(segments, columns, separator, BRANCH_SOFT_MIN_WIDTH)
-            || strip_git_status_counts(segments)
+        if strip_git_status_counts(segments)
             || compact_icon_segments(segments)
+            || drop_user_host_segment(segments)
+            || drop_secondary_segments(segments)
+            || compact_dir_segment(segments)
+            || shrink_branch_segment(segments, columns, separator, BRANCH_SOFT_MIN_WIDTH)
             || shrink_dir_segment_preserving_floor(segments, columns, separator)
         {
             remove_zero_width_segments(segments);
@@ -293,16 +294,16 @@ fn fit_side(segments: &mut Vec<SegmentContent>, columns: usize, separator: &str)
         }
 
         if let Some(segment) = segments.first_mut() {
-            let next_text = if segment.id == "dir" {
-                truncate_dir_text(&segment.text, columns)
-            } else if segment.id == "git_branch" {
-                truncate_branch_text(&segment.text, columns)
-            } else if segment.id == "prompt_char" {
-                truncate_prompt_char_text(&segment.text, columns)
-            } else {
-                width::truncate_end(&segment.text, columns)
-            };
-            set_segment_text(segment, next_text);
+            match segment.id.as_str() {
+                "dir" => set_segment_text(segment, truncate_dir_text(&segment.text, columns)),
+                "git_branch" => {
+                    set_segment_text(segment, truncate_branch_text(&segment.text, columns));
+                }
+                "prompt_char" => {
+                    set_segment_text(segment, truncate_prompt_char_text(&segment.text, columns));
+                }
+                _ => truncate_segment_end(segment, columns),
+            }
         }
         remove_zero_width_segments(segments);
         break;
@@ -345,6 +346,39 @@ fn compact_icon_segments(segments: &mut [SegmentContent]) -> bool {
     }
 
     compacted
+}
+
+fn drop_secondary_segments(segments: &mut Vec<SegmentContent>) -> bool {
+    let initial_len = segments.len();
+    segments.retain(|segment| !is_secondary_segment(&segment.id));
+    segments.len() != initial_len
+}
+
+fn drop_user_host_segment(segments: &mut Vec<SegmentContent>) -> bool {
+    if !segments
+        .iter()
+        .any(|segment| is_primary_segment(&segment.id))
+    {
+        return false;
+    }
+
+    let Some(position) = segments
+        .iter()
+        .position(|segment| segment.id == "user_host")
+    else {
+        return false;
+    };
+
+    segments.remove(position);
+    true
+}
+
+fn is_primary_segment(id: &str) -> bool {
+    matches!(id, "dir" | "git_branch" | "git_status")
+}
+
+fn is_secondary_segment(id: &str) -> bool {
+    can_compact_to_icon(id) || id == "duration"
 }
 
 fn can_compact_to_icon(id: &str) -> bool {
@@ -684,10 +718,8 @@ fn truncate_start_side(
             continue;
         }
 
-        let text = width::truncate_start(&segment.text, available);
-        if !text.is_empty() {
-            let mut segment = segment.clone();
-            set_segment_text(&mut segment, text);
+        let segment = truncate_segment_start(segment, available);
+        if !segment.text.is_empty() {
             kept.push(segment);
         }
         break;
@@ -708,12 +740,128 @@ fn force_leading_ellipsis(segments: &mut [SegmentContent]) {
     }
 
     let first_width = width::display_width(&first.text);
-    let text = if first_width <= 1 {
-        "…".to_string()
-    } else {
-        width::truncate_start(&first.text, first_width - 1)
+    *first = truncate_segment_start(first, first_width.saturating_sub(1));
+}
+
+fn truncate_segment_end(segment: &mut SegmentContent, max_width: usize) {
+    *segment = truncate_segment(segment, max_width, TruncateSide::End);
+}
+
+fn truncate_segment_start(segment: &SegmentContent, max_width: usize) -> SegmentContent {
+    truncate_segment(segment, max_width, TruncateSide::Start)
+}
+
+fn truncate_segment(
+    segment: &SegmentContent,
+    max_width: usize,
+    side: TruncateSide,
+) -> SegmentContent {
+    if width::display_width(&segment.text) <= max_width {
+        return segment.clone();
+    }
+
+    if !segment.uses_parts() {
+        let text = match side {
+            TruncateSide::Start => width::truncate_start(&segment.text, max_width),
+            TruncateSide::End => width::truncate_end(&segment.text, max_width),
+        };
+        let mut segment = segment.clone();
+        set_segment_text(&mut segment, text);
+        return segment;
+    }
+
+    let ellipsis_style = match side {
+        TruncateSide::Start => segment
+            .parts
+            .last()
+            .map(|part| part.style.clone())
+            .unwrap_or_else(|| segment.style.clone()),
+        TruncateSide::End => segment
+            .parts
+            .first()
+            .map(|part| part.style.clone())
+            .unwrap_or_else(|| segment.style.clone()),
     };
-    set_segment_text(first, text);
+
+    if max_width == 0 {
+        return SegmentContent::new(segment.id.clone(), String::new(), ellipsis_style);
+    }
+
+    let content_width = max_width - 1;
+    let mut parts = match side {
+        TruncateSide::Start => retained_suffix_parts(&segment.parts, content_width),
+        TruncateSide::End => retained_prefix_parts(&segment.parts, content_width),
+    };
+
+    match side {
+        TruncateSide::Start => {
+            if let Some(first) = parts.first_mut() {
+                first.text.insert(0, '…');
+            } else {
+                parts.push(SegmentPart::new("…", ellipsis_style));
+            }
+        }
+        TruncateSide::End => {
+            if let Some(last) = parts.last_mut() {
+                last.text.push('…');
+            } else {
+                parts.push(SegmentPart::new("…", ellipsis_style));
+            }
+        }
+    }
+
+    SegmentContent::from_parts(segment.id.clone(), parts)
+}
+
+fn retained_prefix_parts(parts: &[SegmentPart], max_width: usize) -> Vec<SegmentPart> {
+    let mut remaining = max_width;
+    let mut retained = Vec::new();
+
+    for part in parts {
+        let part_width = width::display_width(&part.text);
+        if part_width <= remaining {
+            retained.push(part.clone());
+            remaining -= part_width;
+            continue;
+        }
+
+        let text = width::take_prefix(&part.text, remaining);
+        if !text.is_empty() {
+            retained.push(SegmentPart::new(text, part.style.clone()));
+        }
+        break;
+    }
+
+    retained
+}
+
+fn retained_suffix_parts(parts: &[SegmentPart], max_width: usize) -> Vec<SegmentPart> {
+    let mut remaining = max_width;
+    let mut retained = Vec::new();
+
+    for part in parts.iter().rev() {
+        let part_width = width::display_width(&part.text);
+        if part_width <= remaining {
+            retained.push(part.clone());
+            remaining -= part_width;
+            continue;
+        }
+
+        let text = width::take_suffix(&part.text, remaining);
+        if !text.is_empty() {
+            retained.push(SegmentPart::new(text, part.style.clone()));
+        }
+        break;
+    }
+
+    retained.reverse();
+    retained
+}
+
+#[derive(Clone, Copy)]
+enum TruncateSide {
+    Start,
+    End,
 }
 
 fn strip_prompt_markers(input: &str) -> String {
@@ -782,10 +930,43 @@ mod tests {
         assert_snapshot!(
             render(&config, &state).prompt,
             @r###"
-%{[32m%}~/p/nova%{[0m%} +2.3s          11:16:42
+%{[32m%}~/p/nova%{[0m%} +2.3s
 %{[1;31m%}[1]%{[0m%} %{[1;31m%}❯ %{[0m%}
 "###
         );
+    }
+
+    #[test]
+    fn two_line_right_prompt_reserves_a_gap_at_minimum_width() {
+        let long_left = "a".repeat(50);
+        let output = lower(
+            RenderedPrompt {
+                line1_left: vec![test_segment("custom", &long_left)],
+                line1_right: vec![test_segment("time", "12:34:56")],
+                line2_left: vec![test_segment("prompt_char", ">_")],
+                line2_right: Vec::new(),
+            },
+            50,
+        );
+
+        let first_line = output.prompt.lines().next().expect("first prompt line");
+        assert_eq!(visible_prompt_width(first_line), 50);
+        assert!(first_line.ends_with(" 12:34:56"));
+    }
+
+    #[test]
+    fn two_line_right_prompt_is_hidden_below_minimum_width() {
+        let output = lower(
+            RenderedPrompt {
+                line1_left: vec![test_segment("custom", "left")],
+                line1_right: vec![test_segment("time", "12:34:56")],
+                line2_left: vec![test_segment("prompt_char", ">_")],
+                line2_right: Vec::new(),
+            },
+            49,
+        );
+
+        assert_eq!(output.prompt, "left\n>_");
     }
 
     #[test]
@@ -859,7 +1040,7 @@ mod tests {
     }
 
     #[test]
-    fn input_line_ellipsizes_left_side_before_wrapped_prompt_char() {
+    fn input_line_drops_user_host_before_wrapped_prompt_char() {
         let mut left = vec![
             test_segment("user_host", "t1190078@M4Pro"),
             test_segment("dir", "~/dev/oss/nova"),
@@ -873,7 +1054,7 @@ mod tests {
         let lines = input_line.prompt.lines().collect::<Vec<_>>();
 
         assert!(input_line.wrapped);
-        assert!(lines[0].starts_with('…'));
+        assert!(!lines[0].contains("t1190078@M4Pro"));
         assert!(lines[0].contains("fix"));
         assert_eq!(lines[1], "❯ ");
     }
@@ -1157,7 +1338,7 @@ mod tests {
     }
 
     #[test]
-    fn narrow_fitting_preserves_dir_floor_and_truncates_branch() {
+    fn narrow_fitting_prioritizes_dir_and_branch_over_user_host() {
         let mut segments = vec![
             test_segment("user_host", "user@host"),
             test_segment("dir", "~/dev/oss/nova"),
@@ -1172,12 +1353,7 @@ mod tests {
                 .iter()
                 .map(|segment| (segment.id.as_str(), segment.text.as_str()))
                 .collect::<Vec<_>>(),
-            [
-                ("user_host", "user@host"),
-                ("dir", "nova"),
-                ("git_branch", "feat…ranch"),
-                ("node_version", "24.16.0")
-            ]
+            [("dir", "nova"), ("git_branch", "feat…ranch")]
         );
     }
 
@@ -1213,12 +1389,12 @@ mod tests {
                 .iter()
                 .map(|segment| (segment.id.as_str(), segment.text.as_str()))
                 .collect::<Vec<_>>(),
-            [("dir", "~/d/o/n/s/render"), ("rust_version", " 1.96.1")]
+            [("dir", "~/dev/oss/nova/src/render")]
         );
     }
 
     #[test]
-    fn fitting_compacts_icon_segments_as_a_group_with_separator() {
+    fn fitting_compacts_icon_segments_when_they_fit_with_primary_segments() {
         let mut segments = vec![
             test_segment("dir", "nova"),
             test_segment("nix_shell", " impure (nix-shell-env)"),
@@ -1238,7 +1414,7 @@ mod tests {
     }
 
     #[test]
-    fn fitting_does_not_drop_segments_after_compaction() {
+    fn fitting_drops_secondary_segments_before_primary_segments() {
         let mut segments = vec![
             test_segment("rust_version", " 1.96.1"),
             test_segment("nix_shell", " impure (nix-shell-env)"),
@@ -1254,14 +1430,59 @@ mod tests {
                 .iter()
                 .map(|segment| (segment.id.as_str(), segment.text.as_str()))
                 .collect::<Vec<_>>(),
+            [("prompt_char", "❯ ")]
+        );
+    }
+
+    #[test]
+    fn fitting_drops_user_host_before_secondary_icons() {
+        let mut segments = vec![
+            test_segment("user_host", "user@host"),
+            test_segment("dir", "directory"),
+            test_segment("git_branch", "feature"),
+            test_segment("git_status", "[!+?]"),
+            test_segment("rust_version", " 1.96.1"),
+        ];
+
+        fit_side(&mut segments, 34, " ");
+
+        assert_eq!(
+            segments
+                .iter()
+                .map(|segment| (segment.id.as_str(), segment.text.as_str()))
+                .collect::<Vec<_>>(),
             [
-                ("rust_version", ""),
-                ("nix_shell", ""),
-                ("aws", ""),
-                ("duration", "+10s"),
-                ("prompt_char", "❯ ")
+                ("dir", "directory"),
+                ("git_branch", "feature"),
+                ("git_status", "[!+?]"),
+                ("rust_version", "")
             ]
         );
+    }
+
+    #[test]
+    fn fitting_two_line_left_side_drops_secondary_segments_before_truncating_primary() {
+        let output = lower(
+            RenderedPrompt {
+                line1_left: vec![
+                    test_segment("dir", "directory"),
+                    test_segment("git_branch", "feature/very-long-branch"),
+                    test_segment("git_status", "[!+?]"),
+                    test_segment("rust_version", " 1.96.1"),
+                    test_segment("nix_shell", " impure (nix-shell-env)"),
+                ],
+                line1_right: vec![test_segment("time", "12:34:56")],
+                line2_left: vec![test_segment("prompt_char", ">_")],
+                line2_right: Vec::new(),
+            },
+            50,
+        );
+
+        let first_line = output.prompt.lines().next().expect("first prompt line");
+        assert!(first_line.contains("directory feature/very-long-branch [!+?]"));
+        assert!(!first_line.contains(''));
+        assert!(!first_line.contains(''));
+        assert!(first_line.ends_with("  12:34:56"));
     }
 
     #[test]
@@ -1364,10 +1585,60 @@ mod tests {
 
         fit_side(&mut segments, 4, " ");
 
-        assert_eq!(segments[0].style.fg.as_deref(), Some("green"));
+        assert_eq!(segments[0].parts[0].style.fg.as_deref(), Some("green"));
         assert_eq!(
             lower_side(&segments, " "),
             "%{\u{1b}[32m%}use…%{\u{1b}[0m%}"
+        );
+    }
+
+    #[test]
+    fn fitting_preserves_part_styles_across_truncation_boundary() {
+        let mut segments = vec![SegmentContent::from_parts(
+            "user_host",
+            vec![
+                SegmentPart::new(
+                    "user",
+                    Style {
+                        fg: Some("green".to_string()),
+                        bg: None,
+                        bold: false,
+                    },
+                ),
+                SegmentPart::new("@host", Style::default()),
+            ],
+        )];
+
+        fit_side(&mut segments, 6, " ");
+
+        assert_eq!(
+            lower_side(&segments, " "),
+            "%{\u{1b}[32m%}user%{\u{1b}[0m%}@…"
+        );
+    }
+
+    #[test]
+    fn fitting_preserves_suffix_part_styles_when_truncating_start_side() {
+        let segments = vec![SegmentContent::from_parts(
+            "user_host",
+            vec![
+                SegmentPart::new(
+                    "abcdef",
+                    Style {
+                        fg: Some("green".to_string()),
+                        bg: None,
+                        bold: false,
+                    },
+                ),
+                SegmentPart::new("@host", Style::default()),
+            ],
+        )];
+
+        let truncated = truncate_start_side(&segments, 8, " ");
+
+        assert_eq!(
+            lower_side(&truncated, " "),
+            "%{\u{1b}[32m%}…ef%{\u{1b}[0m%}@host"
         );
     }
 

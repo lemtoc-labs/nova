@@ -61,7 +61,7 @@ fn truncate(input: &str, max_width: usize, side: TruncateSide) -> String {
     }
 }
 
-fn take_prefix(input: &str, max_width: usize) -> String {
+pub(super) fn take_prefix(input: &str, max_width: usize) -> String {
     let mut width = 0;
     let mut output = String::new();
 
@@ -77,7 +77,7 @@ fn take_prefix(input: &str, max_width: usize) -> String {
     output
 }
 
-fn take_suffix(input: &str, max_width: usize) -> String {
+pub(super) fn take_suffix(input: &str, max_width: usize) -> String {
     let mut width = 0;
     let mut output = Vec::new();
 
